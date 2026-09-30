@@ -11,6 +11,7 @@
   <array>
     <string>__REPO__/.venv/bin/fai</string>
     <string>autopilot</string>
+    <string>--jitter</string>
     <string>--notify</string>
     <string>--send</string>
   </array>

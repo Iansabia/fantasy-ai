@@ -32,7 +32,7 @@ def cfg(tmp_path):
                         year=2026, auth_profile="cousin")
 
 
-def make_state(entries, slots=None, fas=None, team_id=1, week=4, extra_teams=()):
+def make_state(entries, slots=None, fas=None, team_id=1, week=4, extra_teams=(), raw_pro=None):
     teams = [(team_id, "Mine", entries), *extra_teams]
-    return parse_league(b.league(teams, slots or b.BE7_SLOTS, week=week), b.pro_teams(), team_id,
+    return parse_league(b.league(teams, slots or b.BE7_SLOTS, week=week), raw_pro or b.pro_teams(), team_id,
                         raw_fa={"players": fas or []})

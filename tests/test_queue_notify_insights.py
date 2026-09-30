@@ -130,13 +130,13 @@ def test_console_notifier_and_messages(demo_state):
     facts = insights.build_facts("demo", demo_state, res, rank_free_agents(demo_state))
     n.send(notify.msg_weekly(facts))
     assert len(be.sent) >= 2 and all(len(t) <= 310 for _, t in be.sent)
-    assert notify.msg_starter_injuries("demo", demo_state).startswith("demo: starters")
+    assert "demo | Injured starters" in notify.msg_starter_injuries("demo", demo_state)
     assert notify.mask("+15551234567") == "***67"
 
 
 def test_pending_message_format(store):
     a = store.add("league-a", "TRADE_PROPOSAL", "give X get Y, +6.2 pts/wk.", {}, {})
-    assert notify.msg_pending(a) == "Trade proposal #1 (league-a): give X get Y, +6.2 pts/wk. Reply 'approve 1' or run fai approve 1"
+    assert notify.msg_pending(a) == "\u2753 Trade proposal #1 | league-a\n\ngive X get Y, +6.2 pts/wk.\n\nReply 'approve 1' or 'reject 1'"
 
 
 def test_reply_stub():

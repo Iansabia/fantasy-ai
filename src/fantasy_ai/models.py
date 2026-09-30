@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from .slots import OUT_STATUSES, IR, slot_name
+from .slots import HEALTHY_STATUSES, IR, IR_ELIGIBLE_STATUSES, OUT_STATUSES, STATUS_DISCOUNT, slot_name
 
 SEASON_WEEKS = 17  # fantasy regular season + playoffs, used for rest-of-season math
 
@@ -29,6 +29,9 @@ class Player:
     ros_multiplier: float = 1.0              # role/sentiment/buzz effect on rest-of-season value
     buzz: float = 0.0                        # 0..1 trending/news volume
     news_out: bool = False                   # confident fresh news says he will not play
+    news_status: str | None = None           # status from news; if set, proj_week already includes it
+    score_multiplier: float = 1.0            # product of bounded factors (factors/score.py)
+    factors: list = field(default_factory=list)   # factors.score.Factor rows with reasons
     reasons: list[str] = field(default_factory=list)   # cited reasons for any adjustment
 
     @property
@@ -40,6 +43,28 @@ class Player:
 
     def is_out(self) -> bool:
         return (self.injury_status or "ACTIVE").upper() in OUT_STATUSES
+
+    @property
+    def game_status(self) -> str:
+        return (self.injury_status or "ACTIVE").upper()
+
+    def is_healthy(self) -> bool:
+        return self.game_status in HEALTHY_STATUSES
+
+    def ir_eligible(self) -> bool:
+        return self.game_status in IR_ELIGIBLE_STATUSES and IR in (self.eligible_slots or [IR])
+
+    def status_discount(self) -> float:
+        """ESPN game-status discount, unless news already priced a status into proj_week."""
+        if self.news_status is not None:
+            return 1.0
+        return STATUS_DISCOUNT.get(self.game_status, 1.0)
+
+    def lineup_value(self, week: int) -> float:
+        """Expected points used by the optimizer: 0 if he can't play, discounted if he may not."""
+        if not self.available(week):
+            return 0.0
+        return round(self.proj_week * self.status_discount() * self.score_multiplier, 2)
 
     def available(self, week: int) -> bool:
         """Can this player score this week?"""

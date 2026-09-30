@@ -27,10 +27,18 @@ class WaiverSuggestion:
 
 
 def weakest_by_position(state: LeagueState) -> dict[str, Player]:
+    """Weakest droppable player per position. Never locked players, never players in the IR
+    slot, and never IR-eligible players while an IR slot can still hold them (they are about to
+    move to IR, which costs no bench spot)."""
+    from .slots import IR
     week = state.scoring_period
+    ir_room = state.slot_counts.get(IR, 0) - sum(1 for p in state.roster if p.on_ir_slot)
     out: dict[str, Player] = {}
     for p in state.roster:
         if p.locked or p.on_ir_slot:
+            continue
+        if p.ir_eligible() and ir_room > 0:
+            ir_room -= 1
             continue
         cur = out.get(p.position)
         if cur is None or p.ros_value(week) < cur.ros_value(week):

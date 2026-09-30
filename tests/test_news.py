@@ -103,7 +103,7 @@ def test_questionable_starter_loses_to_close_backup():
     res = optimize(s)
     assert res.target[2] == 0 and res.target[1] == 20
     reasons = " ".join(m.reason for m in res.moves)
-    assert "Q Star listed questionable (ESPN, 2026-09-30)" in reasons and "ESPN 20.0" not in reasons
+    assert "Q Star listed questionable: hamstring (ESPN, 2026-09-30)" in reasons and "ESPN 20.0" not in reasons
 
 
 def test_news_out_benches_even_if_espn_active():

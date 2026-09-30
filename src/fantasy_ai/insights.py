@@ -24,8 +24,8 @@ def build_facts(label: str, state: LeagueState, lineup: LineupResult,
         "team": state.my_team.name,
         "week": week,
         "matchup": state.matchup,
-        "lineup_moves": [str(m) for m in lineup.moves],
-        "move_count": len(lineup.moves),
+        "lineup_moves": [m.reason or str(m) for m in lineup.moves + lineup.ir_moves],
+        "move_count": len(lineup.moves) + len(lineup.ir_moves),
         "projected_before": lineup.before_points,
         "projected_after": lineup.after_points,
         "projected_gain": lineup.gain,
@@ -37,8 +37,8 @@ def build_facts(label: str, state: LeagueState, lineup: LineupResult,
             for w in (waivers or [])
         ],
         "recent_transactions": [
-            f"{t['team']}: {t['type']} {t['status']}" for t in state.transactions[:5]
-        ],
+            f"{t['team']}: {t['type']} {t['status']}" for t in state.transactions
+            if not str(t.get("status", "")).startswith("FAILED")][:5],
     }
 
 

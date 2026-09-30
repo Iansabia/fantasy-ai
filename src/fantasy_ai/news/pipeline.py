@@ -16,10 +16,11 @@ def players_to_research(state: LeagueState) -> list:
 
 
 def enrich(state: LeagueState, llm, client: PoliteClient | None = None, sources=None,
-           trending: SleeperTrending | None = None) -> dict[int, adjust.Adjustment]:
-    """Mutates state in place. Returns the adjustments (with reasons) by player id."""
+           trending: SleeperTrending | None = None, players: list | None = None) -> dict[int, adjust.Adjustment]:
+    """Mutates state in place. Returns the adjustments (with reasons) by player id.
+    `players` limits which players get per-player news (default: roster + top free agents)."""
     client = client or PoliteClient()
-    players = players_to_research(state)
+    players = players if players is not None else players_to_research(state)
     items = []
     for src in (sources if sources is not None else default_sources(client)):
         try:

@@ -51,6 +51,7 @@ jobs:
       TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
       STATE_KEY: ${{ secrets.STATE_KEY }}
+      ODDS_API_KEY: ${{ secrets.ODDS_API_KEY }}
       FAI_LLM_MAX_CALLS: "12"
     steps:
       - uses: actions/checkout@v4
@@ -79,10 +80,10 @@ jobs:
 
       - name: Lineups (automatic)
         if: steps.mode.outputs.mode == 'lineup'
-        run: fai autopilot --notify ${{ vars.LIVE == 'true' && '--send' || '' }}
+        run: fai autopilot --jitter --notify ${{ vars.LIVE == 'true' && '--send' || '' }}
       - name: Waiver suggestions (approval queue only)
         if: steps.mode.outputs.mode == 'waivers'
-        run: fai autopilot --notify --waivers
+        run: fai autopilot --jitter --notify --waivers
       - name: Telegram approvals
         if: steps.mode.outputs.mode == 'poll'
         run: |

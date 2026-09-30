@@ -33,3 +33,17 @@ notify:
   to:                         # owner -> env var in .env holding comma-separated phone numbers
     ian: NOTIFY_TO_IAN
     cousin: NOTIFY_TO_COUSIN
+
+# Factor weights and caps (all optional; defaults in src/fantasy_ai/factors/score.py).
+factors:
+  matchup: {weight: 0.5, cap: 0.12}      # opponent points allowed to the position
+  vegas: {weight: 0.4, cap: 0.10}        # needs ODDS_API_KEY in .env, skipped otherwise
+  usage: {weight: 0.15, cap: 0.08}       # needs the optional nflreadpy package
+  ceiling: {weight: 0.15, cap: 0.04}
+  total_cap: [0.70, 1.35]                # clamp on the product of all factors
+
+# Anti-ban pacing (defaults in src/fantasy_ai/pacing.py).
+pacing:
+  writes_per_league_per_day: 6
+  writes_per_run: 3
+  cooldown_hours: 24

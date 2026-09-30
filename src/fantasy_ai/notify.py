@@ -12,6 +12,7 @@ Messages are split into chunks of about 300 characters.
 from __future__ import annotations
 
 import os
+import re
 import subprocess
 from typing import Protocol
 
@@ -21,7 +22,7 @@ from .config import ROOT
 from .lineup import LineupResult
 from .models import LeagueState
 from .pending import PendingAction
-from .slots import NON_STARTING
+from .slots import NON_STARTING, slot_name
 
 MAX_CHARS = 300
 
@@ -42,11 +43,24 @@ class ConsoleBackend:
 
 
 class IMessageBackend:
+    max_chars = 1500
+
     def send(self, to: str, text: str) -> None:
         script = (
             'on run argv\n'
             '  tell application "Messages"\n'
-            '    set svc to 1st account whose service type = iMessage\n'
+            # some accounts (SMS relay, RCS) throw when their properties are read,
+            # so a "whose" filter fails; walk them one at a time instead
+            '    set svc to missing value\n'
+            '    repeat with a in accounts\n'
+            '      try\n'
+            '        if service type of a is iMessage and enabled of a then\n'
+            '          set svc to a\n'
+            '          exit repeat\n'
+            '        end if\n'
+            '      end try\n'
+            '    end repeat\n'
+            '    if svc is missing value then error "no enabled iMessage account in Messages.app"\n'
             '    send (item 2 of argv) to participant (item 1 of argv) of svc\n'
             '  end tell\n'
             'end run'
@@ -76,6 +90,8 @@ TELEGRAM_API = "https://api.telegram.org/bot{token}/{method}"
 
 
 class TelegramBackend:
+    max_chars = 3500
+
     def __init__(self, transport: httpx.BaseTransport | None = None):
         self.token = os.environ.get("TELEGRAM_BOT_TOKEN", "")
         self.transport = transport
@@ -98,28 +114,27 @@ def mask(number: str) -> str:
 
 
 def split_text(text: str, limit: int = MAX_CHARS) -> list[str]:
-    """Split on line breaks, then words, so each chunk is <= limit."""
+    """Split into chunks <= limit, keeping whole lines (and blank-line sections) together."""
+    if len(text) <= limit:
+        return [text.strip()] if text.strip() else []
     chunks, cur = [], ""
-    for word in text.replace("\n", " \n ").split(" "):
-        if word == "\n":
-            if len(cur) >= limit * 0.6:
+    for line in text.split("\n"):
+        while len(line) > limit:                      # one very long line: break on words
+            cut = line.rfind(" ", 0, limit)
+            cut = cut if cut > 0 else limit
+            if cur.strip():
                 chunks.append(cur.strip())
                 cur = ""
-            else:
-                cur += "\n"
-            continue
-        while len(word) > limit:
-            chunks.append(word[:limit])
-            word = word[limit:]
-        if len(cur) + len(word) + 1 > limit:
+            chunks.append(line[:cut].strip())
+            line = line[cut:].strip()
+        if len(cur) + len(line) + 1 > limit and cur.strip():
             chunks.append(cur.strip())
             cur = ""
-        cur += (" " if cur and not cur.endswith("\n") else "") + word
+        cur += line + "\n"
     if cur.strip():
         chunks.append(cur.strip())
-    chunks = [c for c in chunks if c]
     if len(chunks) > 1:
-        chunks = [f"({i}/{len(chunks)}) {c}"[:limit + 8] for i, c in enumerate(chunks, 1)]
+        chunks = [f"({i}/{len(chunks)})\n{c}" for i, c in enumerate(chunks, 1)]
     return chunks
 
 
@@ -129,8 +144,9 @@ class Notifier:
 
     def send(self, text: str) -> int:
         n = 0
+        limit = getattr(self.backend, "max_chars", MAX_CHARS)
         for to in self.recipients:
-            for chunk in split_text(text):
+            for chunk in split_text(text, limit):
                 self.backend.send(to, chunk)
                 n += 1
         return n
@@ -156,39 +172,82 @@ def make_notifier(notify_cfg: dict | None, owner: str) -> Notifier:
 
 
 # ---------------------------------------------------------------- message builders
+# Texts are read on a phone: short header, blank line, one fact per line.
+
+def _pts(x) -> str:
+    return f"{x:.1f}" if isinstance(x, (int, float)) else str(x)
+
 
 def msg_weekly(facts: dict) -> str:
     m = facts.get("matchup")
-    parts = [f"{facts['league']} wk {facts['week']}:"]
+    lines = [f"🏈 {facts['league']} | Week {facts['week']}"]
     if m:
-        parts.append(f"vs {m['opp_name']} {m['my_points']}-{m['opp_points']}.")
-    parts.append(f"Lineup {facts['projected_after']} proj" + (f" ({facts['projected_gain']:+.1f} after {facts['move_count']} moves)." if facts["lineup_moves"] else ", already optimal."))
+        lines.append(f"vs {m['opp_name']}: {_pts(m['my_points'])} - {_pts(m['opp_points'])}")
+    lines.append("")
+    if facts["lineup_moves"]:
+        lines.append(f"Lineup: {_pts(facts['projected_after'])} proj ({facts['projected_gain']:+.1f} from {facts['move_count']} moves)")
+    else:
+        lines.append(f"Lineup: {_pts(facts['projected_after'])} proj, already set")
     if facts["injured_out"]:
-        parts.append("Out: " + ", ".join(facts["injured_out"]) + ".")
+        lines.append("")
+        lines.append("Out:")
+        lines += [f"• {n}".replace("INJURY_RESERVE", "IR") for n in facts["injured_out"]]
     if facts["waiver_ideas"]:
         w = facts["waiver_ideas"][0]
-        parts.append(f"Top waiver idea: add {w['add']}, drop {w['drop']}.")
-    return " ".join(parts)
+        lines.append("")
+        lines.append("Top waiver idea:")
+        lines.append(f"• Add {w['add']}")
+        lines.append(f"• Drop {w['drop']}")
+    return "\n".join(lines)
+
+
+def _move_line(m) -> str:
+    base = f"{m.name}: {slot_name(m.from_slot)} → {slot_name(m.to_slot)}"
+    # drop the "started X at RB:" lead-in, the bullet already says who moved where
+    why = re.sub(r"^(started|benched|moved)\s.*?:\s*", "", m.reason or "", flags=re.I)
+    return f"• {base}" + (f"\n   {why[:1].upper() + why[1:]}" if why else "")
 
 
 def msg_lineup_changes(label: str, res: LineupResult, sent: bool = True) -> str:
-    head = f"{label}: lineup {'set' if sent else 'plan (dry run)'}, {res.before_points} -> {res.after_points} proj ({res.gain:+.1f})."
-    lines = [m.reason or str(m) for m in res.moves if m.to_slot != 20] + \
-            [m.reason or str(m) for m in res.moves if m.to_slot == 20]
-    return head + "\n" + "\n".join(f"- {l}" for l in lines)
+    lines = [f"🏈 {label} | {'Lineup set' if sent else 'Lineup plan (preview)'}",
+             f"{_pts(res.before_points)} → {_pts(res.after_points)} proj ({res.gain:+.1f})", ""]
+    ins = [m for m in res.moves if m.to_slot != 20]
+    outs = [m for m in res.moves if m.to_slot == 20]
+    if ins:
+        lines.append("Starting:")
+        lines += [_move_line(m) for m in ins]
+    if outs:
+        if ins:
+            lines.append("")
+        lines.append("Benched:")
+        lines += [_move_line(m) for m in outs]
+    ir = getattr(res, "ir_moves", None) or []
+    if ir:
+        lines.append("")
+        lines.append("IR:")
+        lines += [_move_line(m) for m in ir]
+    return "\n".join(lines)
 
 
 def msg_pending(a: PendingAction) -> str:
     label = {"WAIVER": "Waiver claim", "FREEAGENT": "Free agent add", "TRADE_PROPOSAL": "Trade proposal"}.get(a.kind, a.kind)
-    return f"{label} #{a.id} ({a.league}): {a.summary} Reply 'approve {a.id}' or run fai approve {a.id}"
+    return (f"❓ {label} #{a.id} | {a.league}\n\n"
+            f"{a.summary}\n\n"
+            f"Reply 'approve {a.id}' or 'reject {a.id}'")
+
+
+def msg_paused(label: str, why: str) -> str:
+    return (f"⏸️ {label} | Paused\n\n"
+            f"• {why}\n"
+            f"• No more ESPN writes for this league until the cooldown ends")
 
 
 def msg_starter_injuries(label: str, state: LeagueState) -> str | None:
-    hurt = [f"{p.name} ({p.injury_status})" for p in state.roster
+    hurt = [f"• {p.name} ({p.injury_status.replace('_', ' ').title()})" for p in state.roster
             if p.lineup_slot not in NON_STARTING and (p.injury_status or "ACTIVE") not in ("ACTIVE", "NORMAL")]
     if not hurt:
         return None
-    return f"{label}: starters with injury tags: " + ", ".join(hurt) + "."
+    return f"🚑 {label} | Injured starters\n\n" + "\n".join(hurt)
 
 
 _REPLY = __import__("re").compile(r"^\s*/?(approve|reject)\s+#?(\d+)\s*$", 2)  # 2 = re.IGNORECASE

@@ -144,16 +144,23 @@ def parse_league(raw_league: dict, raw_pro: dict, my_team_id: int,
 class EspnReader:
     """Loads a league either from a fixture dir (offline) or from ESPN via espn-api.
 
-    Fixture dir layout: league.json, pro_teams.json, free_agents.json, transactions.json
-    (same raw shapes ESPN returns).
+    Fixture dir layout: league.json, pro_teams.json, free_agents.json, transactions.json,
+    positional_ratings.json (same raw shapes ESPN returns).
+
+    Every network read goes through the pacer (1-4 s random gap, browser-like headers) and is
+    cached for the life of this reader, so each view is fetched at most once per run.
+    401/403/429 or other unexpected HTTP errors set a cooldown and raise PacingStop.
     """
 
-    def __init__(self, cfg: LeagueConfig, creds: Credentials | None = None):
+    def __init__(self, cfg: LeagueConfig, creds: Credentials | None = None, pacer=None):
+        from .pacing import NoPacer, Pacer
         self.cfg = cfg
         self.creds = creds
+        self.pacer = pacer or (NoPacer() if cfg.fixture_dir else Pacer())
         self._req = None
+        self._cache: dict[str, object] = {}
 
-    # -- network (untested until real league ids arrive) --
+    # -- network --
     def _request(self):
         if self._req is None:
             from espn_api.requests.espn_requests import EspnFantasyRequests
@@ -162,19 +169,48 @@ class EspnReader:
                                             league_id=self.cfg.league_id, cookies=cookies)
         return self._req
 
+    def _fetch(self, key: str, fn, fresh: bool = False):
+        if not fresh and key in self._cache:
+            return self._cache[key]
+        from espn_api.requests.espn_requests import ESPNAccessDenied, ESPNUnknownError
+        from .pacing import PacingStop
+        if self.pacer.in_cooldown(self.cfg.name):
+            raise PacingStop(f"paused after ESPN pushed back; cooldown until {self.pacer.in_cooldown(self.cfg.name)}")
+        self.pacer.before_read()
+        try:
+            data = fn()
+        except ESPNAccessDenied as e:
+            raise PacingStop(self.pacer.cooldown(self.cfg.name, "access denied on read")) from e
+        except ESPNUnknownError as e:
+            raise PacingStop(self.pacer.cooldown(self.cfg.name, str(e))) from e
+        self._cache[key] = data
+        return data
+
+    def _headers(self, extra: dict | None = None) -> dict:
+        from .pacing import ESPN_HEADERS
+        return {**ESPN_HEADERS, **(extra or {})}
+
     def _fixture(self, name: str) -> dict | None:
         path: Path = self.cfg.fixture_dir / name  # type: ignore[operator]
         return json.loads(path.read_text()) if path.exists() else None
 
-    def raw_league(self) -> dict:
+    def raw_league(self, fresh: bool = False) -> dict:
         if self.cfg.fixture_dir:
             return self._fixture("league.json") or {}
-        return self._request().league_get(params={"view": LEAGUE_VIEWS})
+        return self._fetch("league", lambda: self._request().league_get(
+            params={"view": LEAGUE_VIEWS}, headers=self._headers()), fresh)
 
     def raw_pro_teams(self) -> dict:
         if self.cfg.fixture_dir:
             return self._fixture("pro_teams.json") or {}
-        return self._request().get_pro_schedule()
+        return self._fetch("pro", lambda: self._request().get(
+            params={"view": "proTeamSchedules_wl"}, headers=self._headers()))
+
+    def raw_positional_ratings(self, week: int) -> dict:
+        if self.cfg.fixture_dir:
+            return self._fixture("positional_ratings.json") or {}
+        return self._fetch("ratings", lambda: self._request().league_get(
+            params={"view": "mPositionalRatings", "scoringPeriodId": week}, headers=self._headers()))
 
     def raw_free_agents(self, week: int, size: int = 50) -> dict:
         if self.cfg.fixture_dir:
@@ -185,15 +221,15 @@ class EspnReader:
             "limit": size,
             "sortPercOwned": {"sortPriority": 1, "sortAsc": False},
         }}
-        return self._request().league_get(
+        return self._fetch("fa", lambda: self._request().league_get(
             params={"view": "kona_player_info", "scoringPeriodId": week},
-            headers={"x-fantasy-filter": json.dumps(filters)},
-        )
+            headers=self._headers({"x-fantasy-filter": json.dumps(filters)})))
 
     def raw_transactions(self, week: int) -> dict:
         if self.cfg.fixture_dir:
             return self._fixture("transactions.json") or {}
-        return self._request().league_get(params={"view": "mTransactions2", "scoringPeriodId": week})
+        return self._fetch("tx", lambda: self._request().league_get(
+            params={"view": "mTransactions2", "scoringPeriodId": week}, headers=self._headers()))
 
     def load(self, free_agents: bool = False, transactions: bool = False) -> LeagueState:
         """Minimal reads: league + pro schedule, plus FA / transactions only when asked."""
@@ -206,6 +242,6 @@ class EspnReader:
         )
 
     def roster_slots(self) -> dict[int, int]:
-        """{playerId: lineupSlotId} for my team, used for read-back after a write."""
-        state = parse_league(self.raw_league(), {}, self.cfg.team_id)
+        """{playerId: lineupSlotId} for my team, read FRESH (used to verify a write)."""
+        state = parse_league(self.raw_league(fresh=True), {}, self.cfg.team_id)
         return {p.player_id: p.lineup_slot for p in state.roster}

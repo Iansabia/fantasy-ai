@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Checks iMessage for "approve N" / "reject N" replies every 2 minutes while the Mac is awake.
+     Replace REPO with the absolute repo path. The python binary it runs needs Full Disk Access. -->
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>com.fantasyai.poll-imessage</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>REPO/.venv/bin/fai</string>
+    <string>--quiet</string>
+    <string>poll-imessage</string>
+  </array>
+  <key>WorkingDirectory</key><string>REPO</string>
+  <key>StartInterval</key><integer>120</integer>
+  <key>StandardOutPath</key><string>REPO/data/poll-imessage.log</string>
+  <key>StandardErrorPath</key><string>REPO/data/poll-imessage.log</string>
+</dict>
+</plist>

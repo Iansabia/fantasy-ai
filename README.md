@@ -11,7 +11,8 @@ and writes explanation text, and it is never allowed to invent a number.**
 | Command | What happens |
 |---|---|
 | `fai leagues` | List configured leagues and whether cookies are found |
-| `fai lineup <league> [--send]` | Best legal lineup by projection. Prints the moves and the exact ESPN request. Sends only with `--send` |
+| `fai lineup <league> [--send]` | Best legal lineup plus IR moves, after checking news and factors. Prints each move with its reason and the exact ESPN request. Sends only with `--send` |
+| `fai explain <league> <player>` | Full factor breakdown for one player: ESPN projection, news, status, matchup, Vegas, weather, usage, floor/ceiling |
 | `fai waivers <league> [--pick N]` | Free agents ranked by value over your weakest player at the position. `--pick N` puts the add/drop in the approval queue |
 | `fai trade <league> --give X --get Y [--propose]` | Rest-of-season value and starting-lineup impact for both teams. `--propose` queues a trade proposal |
 | `fai pending` / `fai approve <id>` / `fai reject <id>` | The approval queue. `approve` re-reads the league and aborts if anything changed |
@@ -31,8 +32,22 @@ fai report demo
 ### How decisions are made
 
 - **Lineup:** exact search over ESPN's own slot rules (QB, RB, WR, TE, FLEX, OP/superflex,
-  D/ST, K, bench, IR) using each player's `eligibleSlots`. Anyone on bye, OUT, IR or suspended is
-  benched. Locked players (game started) never move. Only changed slots are sent, in one request.
+  D/ST, K, bench, IR) using each player's `eligibleSlots`, on each player's *worth* (below), not raw
+  projection. Anyone on bye, OUT, IR or suspended is benched. Locked players never move. Only
+  changed slots are sent, in one atomic request.
+- **Questionable / doubtful:** news decides. "Full practice, expected to play" means little or no
+  discount; "did not practice, game-time decision" means a big one; "ruled out" means zero. With no
+  news found, a modest default applies (questionable counts 85%, doubtful 10%) and the reason says so.
+- **IR:** an INJURY_RESERVE player moves into an open IR slot automatically. A player who is healthy
+  but still in the IR slot is activated if there is a roster spot; if not, a drop is suggested and
+  waits in the approval queue. IR moves go in a separate request after the lineup, because an IR
+  move has not been captured on the wire yet and one request is all-or-nothing.
+- **Worth = ESPN projection x news x status x factors.** Factors, each capped and tunable in
+  `factors:`: opponent points allowed to the position (ESPN), home/away, Vegas implied team total and
+  spread (The Odds API, optional `ODDS_API_KEY`), game script, usage trend over 3 weeks (nflverse via
+  optional `nflreadpy`), wind and rain for outdoor games (Open-Meteo), a second projection
+  (Sleeper, when available), and floor vs. ceiling when you are a big favorite or underdog. Every
+  factor adds a one-line reason, and `fai explain` shows them all.
 - **Waivers:** rest-of-season projected points vs. the weakest droppable player at the same
   position. Locked and IR-slot players are never suggested as drops.
 - **Trades:** raw value swap plus the change in each team's best starting lineup.
@@ -92,6 +107,11 @@ cookie expires every few months; an auth error means copy it again. Secrets are 
   (that could double-spend).
 - **ESPN errors in plain words.** Typed 409s (`TRAN_LINEUP_LOCKED`, `TRAN_ROSTER_SLOT_LIMIT_EXCEEDED`,
   ...) map to short messages.
+- **Pacing (anti-ban).** Reads are cached per run (one fetch per view per league) with 1 to 4 s random
+  gaps and a browser-like User-Agent; nothing runs in parallel. Scheduled runs start after a random 0
+  to 10 min delay, with 20 to 90 s gaps between leagues and between separate writes. Writes are capped
+  per run (3) and per league per day (6). On 401, 403, 429 or any unexpected error there is no retry:
+  that league pauses for 24 h (`data/pacing.json`) and you get a text.
 - **LLM guardrails.** Any LLM text containing a number that is not in the facts is thrown away
   and the template text is used. LLM calls per run are capped.
 

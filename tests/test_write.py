@@ -164,7 +164,7 @@ def test_timeout_on_waiver_never_blind_retries(cfg):
         raise httpx.ConnectTimeout("slow", request=request)
 
     w = TransactionWriter(cfg, Credentials("s2", "sw"), readback=lambda: {}, transport=httpx.MockTransport(handler))
-    with pytest.raises(WriteRejected, match="do not resend"):
+    with pytest.raises(WriteRejected, match="not retrying|do not resend"):
         w.submit(waiver_payload(3, 4, 11, 22), send=True)
     assert calls["post"] == 1
 

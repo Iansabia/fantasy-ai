@@ -41,23 +41,25 @@ class Move:
 @dataclass
 class LineupResult:
     moves: list[Move]
-    before_points: float
+    before_points: float                   # injury-adjusted expected points (Player.lineup_value)
     after_points: float
-    target: dict[int, int]                 # playerId -> slot after moves
+    target: dict[int, int]                 # playerId -> slot after the lineup moves
     warnings: list[str] = field(default_factory=list)
+    # IR handling. Sent as a SEPARATE ROSTER transaction after the lineup one: a BE->IR / IR->BE
+    # LINEUP item has not been captured on the wire (jwulff 05 section 8 item 9), and one POST is
+    # atomic, so a rejected IR item must not take the lineup moves down with it.
+    ir_moves: list[Move] = field(default_factory=list)
+    ir_drop: Player | None = None          # roster full: suggested drop so ir_activate can come off IR
+    ir_activate: Player | None = None
 
     @property
     def gain(self) -> float:
         return round(self.after_points - self.before_points, 2)
 
 
-def _points(p: Player, week: int) -> float:
-    return p.proj_week if p.available(week) else 0.0
-
-
 def starting_points(roster: list[Player], slots: dict[int, int], week: int) -> float:
     by_id = {p.player_id: p for p in roster}
-    return round(sum(_points(by_id[pid], week) for pid, s in slots.items() if s not in NON_STARTING), 2)
+    return round(sum(by_id[pid].lineup_value(week) for pid, s in slots.items() if s not in NON_STARTING), 2)
 
 
 def best_assignment(candidates: list[Player], open_slots: dict[int, int],
@@ -95,7 +97,8 @@ def optimize(state: LeagueState, roster: list[Player] | None = None) -> LineupRe
     warnings: list[str] = []
     starting = {s: c for s, c in state.slot_counts.items() if s not in NON_STARTING}
 
-    # Locked starters keep their slot and use up that slot.
+    # Locked starters keep their slot and use up that slot. IR-slot players stay for the lineup
+    # step (IR changes are planned separately below).
     open_slots = dict(starting)
     fixed: dict[int, int] = {}
     for p in roster:
@@ -105,18 +108,17 @@ def optimize(state: LeagueState, roster: list[Player] | None = None) -> LineupRe
                 open_slots[p.lineup_slot] -= 1
             if p.locked and p.lineup_slot not in NON_STARTING and not p.available(week):
                 warnings.append(f"{p.name} is locked in {p.slot} but cannot score (bye/OUT); nothing to do.")
-            if p.lineup_slot == IR and not p.is_out():
-                warnings.append(f"{p.name} is in the IR slot but listed {p.injury_status}; ESPN may block other moves until he is activated.")
     open_slots = {s: c for s, c in open_slots.items() if c > 0}
 
     candidates = [p for p in roster if p.player_id not in fixed and p.available(week)]
 
     def value(p: Player, slot: int) -> float:
-        v = p.proj_week + 1e-6  # >0 so a healthy 0-projection player can still fill a hole
+        ev = p.lineup_value(week)            # questionable/doubtful discount lives here
+        v = ev + 1e-6                        # >0 so a healthy 0-projection player can still fill a hole
         if p.lineup_slot == slot:
             v += KEEP_BONUS
         if slot not in FLEX_SLOTS:
-            v += 1e-5 * p.proj_week  # on ties, put the better player in the dedicated slot
+            v += 1e-5 * ev                   # on ties, put the better player in the dedicated slot
         return v
 
     _, assign = best_assignment(candidates, open_slots, value)
@@ -135,25 +137,75 @@ def optimize(state: LeagueState, roster: list[Player] | None = None) -> LineupRe
     for m in moves:
         m.reason = move_reason(by_id[m.player_id], m, week)
 
-    ir_open = state.slot_counts.get(IR, 0) - sum(1 for p in roster if p.lineup_slot == IR)
-    if ir_open > 0:
-        for p in roster:
-            if (p.injury_status or "").upper() in ("INJURY_RESERVE", "IR") and p.lineup_slot != IR and not p.locked:
-                warnings.append(f"{p.name} is on injured reserve and an IR slot is open; moving him there frees a bench spot (not done automatically).")
-
     current = {p.player_id: p.lineup_slot for p in roster}
-    return LineupResult(
+    res = LineupResult(
         moves=moves,
         before_points=starting_points(roster, current, week),
         after_points=starting_points(roster, target, week),
         target=target,
         warnings=warnings,
     )
+    plan_ir(state, roster, res)
+    return res
+
+
+def plan_ir(state: LeagueState, roster: list[Player], res: LineupResult) -> None:
+    """Fill open IR slots with IR-eligible players, and activate IR-slot players who are no
+    longer IR-eligible (ESPN treats them as an illegal IR stash). Activation needs a roster
+    spot; if there is none, suggest a drop for the approval queue instead of acting."""
+    ir_cap = state.slot_counts.get(IR, 0)
+    in_ir = [p for p in roster if p.lineup_slot == IR]
+    roster_limit = sum(c for s, c in state.slot_counts.items() if s != IR)
+    active_count = len(roster) - len(in_ir)
+    to_ir = sorted([p for p in roster if p.lineup_slot != IR and p.ir_eligible() and not p.locked],
+                   key=lambda p: p.ros_value(state.scoring_period), reverse=True)
+    stale = [p for p in in_ir if not p.ir_eligible() and not p.locked]
+
+    def into_ir(p: Player) -> Move:
+        m = Move(p.player_id, p.name, res.target[p.player_id], IR,
+                 f"moved {p.name} to IR: {p.injury_status} (ESPN), frees a bench spot")
+        res.target[p.player_id] = IR
+        return m
+
+    def out_of_ir(p: Player) -> Move:
+        m = Move(p.player_id, p.name, IR, BENCH, f"activated {p.name} from IR: now listed {p.injury_status} (ESPN)")
+        res.target[p.player_id] = BENCH
+        return m
+
+    free = max(0, ir_cap - len(in_ir))
+    for p in to_ir[:free]:
+        res.ir_moves.append(into_ir(p))
+        active_count -= 1
+    waiting = to_ir[free:]
+
+    for p in stale:
+        if waiting:                               # swap: net roster count unchanged
+            res.ir_moves.append(out_of_ir(p))
+            res.ir_moves.append(into_ir(waiting.pop(0)))
+        elif active_count < roster_limit:
+            res.ir_moves.append(out_of_ir(p))
+            active_count += 1
+        else:
+            droppable = [q for q in roster if res.target.get(q.player_id) == BENCH and not q.locked
+                         and q.player_id != p.player_id]
+            if droppable:
+                res.ir_drop = min(droppable, key=lambda q: q.ros_value(state.scoring_period))
+                res.ir_activate = p
+                res.warnings.append(f"{p.name} is healthy but stuck in the IR slot and the roster is full; "
+                                    f"suggested drop {res.ir_drop.name} (needs approval).")
+            break
+    for p in waiting:
+        res.warnings.append(f"{p.name} is IR-eligible but no IR slot is free.")
 
 
 def move_reason(p: Player, m: Move, week: int) -> str:
-    """One line, facts only, for texts: why this player moved."""
-    news = f"; {p.reasons[0]}" if p.reasons else ""
+    """One line, facts only, for texts: why this player moved. Every line names its source."""
+    from .factors.score import top_reasons
+    extra = list(p.reasons[:1]) + top_reasons(p)
+    news = ("; " + "; ".join(extra)) if extra else ""
+    disc = p.status_discount()
+    if disc < 1 and p.news_status is None:
+        news += "; no news found, default discount"
     if m.to_slot == BENCH:
         if p.on_bye(week):
             return f"benched {p.name}: bye week"
@@ -161,9 +213,14 @@ def move_reason(p: Player, m: Move, week: int) -> str:
             return f"benched {p.name}: {p.injury_status} (ESPN)"
         if p.news_out:
             return f"benched {p.name}{news}"
-        return f"benched {p.name}: {p.proj_week:.1f} proj, others project higher{news}"
-    base = f" (ESPN {p.base_proj_week:.1f})" if p.base_proj_week is not None and p.base_proj_week != p.proj_week else ""
-    return f"started {p.name} at {slot_name(m.to_slot)}: {p.proj_week:.1f} proj{base}{news}"
+        if disc < 1:
+            return (f"benched {p.name}: {p.game_status} (ESPN), {p.proj_week:.1f} proj counts as "
+                    f"{p.lineup_value(week):.1f}{news}")
+        esp = p.base_proj_week if p.base_proj_week is not None else p.proj_week
+        return f"benched {p.name}: worth {p.lineup_value(week):.1f} (ESPN proj {esp:.1f}), others higher{news}"
+    esp = p.base_proj_week if p.base_proj_week is not None else p.proj_week
+    tag = f", {p.game_status} but still ahead" if disc < 1 else ""
+    return f"started {p.name} at {slot_name(m.to_slot)}: worth {p.lineup_value(week):.1f} (ESPN proj {esp:.1f}){tag}{news}"
 
 
 def season_lineup_value(roster: list[Player], slot_counts: dict[int, int]) -> float:

@@ -1,21 +1,26 @@
 """`fai` command line.
 
   fai leagues
-  fai lineup <league> [--send] [--notify]
+  fai lineup <league> [--send] [--notify]          (lineup + IR moves; news and factors first)
+  fai explain <league> <player>                     (full factor breakdown for one player)
   fai waivers <league> [--pick N] [--bid B] [--notify]       (--pick queues an approval)
   fai trade <league> --give X --get Y [--propose] [--notify]  (--propose queues an approval)
   fai pending | fai approve <id> | fai reject <id>
   fai report [league] [--llm] [--notify]
-  fai autopilot [--send] [--waivers] [--no-news] [--notify]
+  fai autopilot [--send] [--waivers] [--jitter] [--notify]
   fai poll-telegram
+  fai poll-imessage
   fai state keygen|pack|unpack
+
+Common flags: --no-news (skip the news layer), --no-factors (skip matchup/Vegas/weather/usage).
+Nothing is ever texted unless --notify is given; FAI_NOTIFY_BACKEND=console forces console.
 
 --quiet (or FAI_QUIET=1): stdout shows only counts like "league 1: 2 moves, sent".
 No names, players, payloads, ids or phone numbers. Use it in public CI logs.
 
-Lineups: dry-run unless --send (own team only).
-Waivers, add/drops and trades: never sent directly. They go to the approval queue and are
-sent only by `fai approve <id>`, after a fresh read confirms nothing changed.
+Lineups: dry-run unless --send (own team only). IR moves go in a separate request after the
+lineup request. Waivers, add/drops and trades: never sent directly. They go to the approval
+queue and are sent only by `fai approve <id>`, after a fresh read confirms nothing changed.
 """
 from __future__ import annotations
 
@@ -25,23 +30,31 @@ import io
 import os
 import sys
 
-from . import insights, notify
+from . import engine, insights, notify
 from .config import AppConfig, LeagueConfig, load_config, load_credentials
 from .espn_read import EspnReader
 from .espn_write import (OwnTeamViolation, TransactionWriter, WriteRejected, check_own_team,
                          describe_dry_run, free_agent_payload, lineup_payload,
                          trade_proposal_payload, transaction_url, waiver_payload)
-from .lineup import DISPLAY_ORDER, optimize
+from .lineup import DISPLAY_ORDER, LineupResult, optimize
+from .pacing import Pacer, PacingStop
 from .pending import PendingStore, checks_for_add_drop, checks_for_trade, verify
 from .trades import evaluate_trade
 from .waivers import rank_free_agents
 
-
 SUMMARY: list[str] = []   # the only lines printed in --quiet mode (no identifying details)
+_PACER: Pacer | None = None
 
 
 def summary(line: str) -> None:
     SUMMARY.append(line)
+
+
+def _pacer(cfg: AppConfig) -> Pacer:
+    global _PACER
+    if _PACER is None:
+        _PACER = Pacer(cfg.pacing)
+    return _PACER
 
 
 def _setup(cfg: AppConfig, name: str) -> tuple[LeagueConfig, EspnReader, TransactionWriter]:
@@ -53,8 +66,9 @@ def _setup(cfg: AppConfig, name: str) -> tuple[LeagueConfig, EspnReader, Transac
         # private leagues need cookies; don't make pointless unauthenticated calls to ESPN
         raise SystemExit(f"No cookies for '{lg.name}'. Add ESPN_S2_{lg.auth_profile.upper()} and "
                          f"SWID_{lg.auth_profile.upper()} to .env (see README).")
-    reader = EspnReader(lg, creds)
-    writer = TransactionWriter(lg, creds, readback=reader.roster_slots)
+    pacer = None if lg.fixture_dir else _pacer(cfg)
+    reader = EspnReader(lg, creds, pacer=pacer)
+    writer = TransactionWriter(lg, creds, readback=reader.roster_slots, pacer=pacer)
     return lg, reader, writer
 
 
@@ -66,27 +80,44 @@ def _notifier(cfg: AppConfig, lg: LeagueConfig, args) -> notify.Notifier | None:
     return notify.make_notifier(cfg.notify, lg.owner) if getattr(args, "notify", False) else None
 
 
-def _submit(writer: TransactionWriter, payload: dict, send: bool) -> int:
+def _prepare(cfg: AppConfig, state, reader, args, research=None) -> dict:
+    return engine.prepare(state, reader, cfg.factors, news=not getattr(args, "no_news", False),
+                          factors=not getattr(args, "no_factors", False), research=research)
+
+
+def _submit(writer: TransactionWriter, payload: dict, send: bool, label: str = "") -> int:
     try:
         res = writer.submit(payload, send=send)
     except OwnTeamViolation as e:
         print(f"REFUSED (own-team guard): {e}")
         return 2
+    except PacingStop as e:
+        print(f"STOPPED (pacing): {e}")
+        return 4
     except WriteRejected as e:
-        print(f"ESPN rejected the write: {e.message}")
+        print(f"ESPN rejected the {label or 'write'}: {e.message}")
         return 3
+    if label:
+        print(f"[{label}]")
     print(res.message)
     return 0
 
 
-def _queue(cfg: AppConfig, lg: LeagueConfig, kind: str, summary: str, payload: dict, checks: dict, args) -> int:
+def _queue(cfg: AppConfig, lg: LeagueConfig, kind: str, summary_text: str, payload: dict, checks: dict,
+           args, quiet_print: bool = False) -> int:
     try:
         check_own_team(payload, lg)
     except OwnTeamViolation as e:
         print(f"REFUSED (own-team guard): {e}")
         return 2
-    print(describe_dry_run(transaction_url(lg.year, lg.league_id), payload))
-    a = _store(args).add(lg.name, kind, summary, payload, checks)
+    store = _store(args)
+    sig = _pending_signature(payload)
+    if any(_pending_signature(a.payload) == sig for a in store.open_actions()):
+        print("Same action is already waiting for approval.")
+        return 0
+    if not quiet_print:
+        print(describe_dry_run(transaction_url(lg.year, lg.league_id), payload))
+    a = store.add(lg.name, kind, summary_text, payload, checks)
     print(f"\nQueued as #{a.id} (expires {a.expires[:16]} UTC). Send it with: fai approve {a.id}")
     n = _notifier(cfg, lg, args)
     if n:
@@ -94,8 +125,37 @@ def _queue(cfg: AppConfig, lg: LeagueConfig, kind: str, summary: str, payload: d
     return 0
 
 
+def _pending_signature(payload: dict) -> str:
+    return f"{payload.get('type')}:" + ",".join(f"{i.get('type')}{i.get('playerId')}" for i in payload.get("items", []))
+
+
+def _apply_lineup(cfg: AppConfig, lg: LeagueConfig, writer: TransactionWriter, state, res: LineupResult,
+                  send: bool, args) -> tuple[int, str]:
+    """Send (or dry-run) the lineup request, then the IR request, then queue an IR drop if needed.
+    Returns (rc, status word)."""
+    rc, status = 0, "no changes"
+    if res.moves:
+        rc = _submit(writer, lineup_payload(lg.team_id, state.scoring_period, res.moves), send, "lineup")
+        status = ("sent" if send else "dry-run") if rc == 0 else f"failed (rc {rc})"
+    if res.ir_moves and rc == 0:
+        print("\nIR moves go in a separate request after the lineup one. Note: an IR slot move has not "
+              "been captured on the wire yet (jwulff 05 section 8 item 9); if ESPN rejects it, the lineup is unaffected.")
+        rc_ir = _submit(writer, lineup_payload(lg.team_id, state.scoring_period, res.ir_moves), send, "IR")
+        rc = rc or rc_ir
+        if status == "no changes":
+            status = ("sent" if send else "dry-run") if rc_ir == 0 else f"failed (rc {rc_ir})"
+    if res.ir_drop and res.ir_activate:
+        payload = free_agent_payload(lg.team_id, state.scoring_period, drop_id=res.ir_drop.player_id)
+        _queue(cfg, lg, "FREEAGENT",
+               f"drop {res.ir_drop.name} so {res.ir_activate.name} can come off IR (roster is full).",
+               payload, checks_for_add_drop(None, res.ir_drop.player_id), args)
+    return rc, status
+
+
+# ---------------------------------------------------------------- commands
+
 def cmd_leagues(cfg: AppConfig, args) -> int:
-    print(f"Config: {cfg.source}")
+    print(f"Config: {cfg.source or 'LEAGUES_YAML'}")
     for lg in cfg.leagues:
         mode = "offline fixture" if lg.fixture_dir else (
             "cookies OK" if load_credentials(lg.auth_profile) else f"no cookies (ESPN_S2_{lg.auth_profile.upper()})")
@@ -107,43 +167,92 @@ def cmd_leagues(cfg: AppConfig, args) -> int:
     return 0
 
 
+def _print_roster(state) -> None:
+    wk = state.scoring_period
+    order = lambda p: (DISPLAY_ORDER.index(p.lineup_slot) if p.lineup_slot in DISPLAY_ORDER else 99, -p.proj_week)
+    print(f"  {'slot':9} {'player':24} {'pos':4} {'ESPN':>5} {'worth':>6}  flags")
+    for p in sorted(state.roster, key=order):
+        esp = p.base_proj_week if p.base_proj_week is not None else p.proj_week
+        flags = " ".join(f for f in [
+            "LOCKED" if p.locked else "", "BYE" if p.on_bye(wk) else "",
+            p.game_status if not p.is_healthy() else "", "NEWS" if p.reasons else ""] if f)
+        print(f"  {p.slot:9} {p.name:24} {p.position:4} {esp:5.1f} {p.lineup_value(wk):6.1f}  {flags}")
+
+
 def cmd_lineup(cfg: AppConfig, args) -> int:
     lg, reader, writer = _setup(cfg, args.league)
     state = reader.load()
+    info = _prepare(cfg, state, reader, args)
     res = optimize(state)
     print(f"{lg.label}: {state.my_team.name}, week {state.scoring_period}")
-    order = lambda p: (DISPLAY_ORDER.index(p.lineup_slot) if p.lineup_slot in DISPLAY_ORDER else 99, -p.proj_week)
-    for p in sorted(state.roster, key=order):
-        flags = " ".join(f for f in [
-            "LOCKED" if p.locked else "", "BYE" if p.on_bye(state.scoring_period) else "",
-            p.injury_status if p.injury_status not in ("ACTIVE", "", None) else ""] if f)
-        print(f"  {p.slot:9} {p.name:24} {p.position:4} {p.proj_week:6.1f}  {flags}")
+    print(f"Inputs: ESPN projections"
+          + (f", news for {info['news_players']} players" if info["news"] else ", no news (--no-news or offline)")
+          + (", " + ", ".join(info["factor_sources"]) if info["factor_sources"] else ""))
+    _print_roster(state)
     for w in res.warnings:
         print(f"Note: {w}")
-    if not res.moves:
-        print(f"Lineup already optimal ({res.after_points} projected).")
+    if not res.moves and not res.ir_moves and not res.ir_drop:
+        print(f"Lineup already optimal ({res.after_points} expected points).")
         return 0
-    print(f"\nMoves ({res.before_points} -> {res.after_points}, gain {res.gain:+.2f}):")
-    for m in res.moves:
-        print(f"  {m}")
+    if res.moves:
+        print(f"\nMoves (expected {res.before_points} -> {res.after_points}, gain {res.gain:+.2f}):")
+        for m in res.moves:
+            print(f"  {m}\n      {m.reason}")
+    if res.ir_moves:
+        print("\nIR moves:")
+        for m in res.ir_moves:
+            print(f"  {m}\n      {m.reason}")
     print()
-    rc = _submit(writer, lineup_payload(lg.team_id, state.scoring_period, res.moves), args.send)
+    rc, _ = _apply_lineup(cfg, lg, writer, state, res, args.send, args)
     n = _notifier(cfg, lg, args)
-    if n and args.send and rc == 0:
+    if n and args.send and rc == 0 and (res.moves or res.ir_moves):
         n.send(notify.msg_lineup_changes(lg.label, res))
     return rc
+
+
+def cmd_explain(cfg: AppConfig, args) -> int:
+    lg, reader, _ = _setup(cfg, args.league)
+    state = reader.load(free_agents=True)
+    target = state.find_player(args.player)
+    if not target:
+        raise SystemExit(f"Player not found (or ambiguous): {args.player}")
+    info = _prepare(cfg, state, reader, args, research=[target])
+    p, wk = target, state.scoring_period
+    esp = p.base_proj_week if p.base_proj_week is not None else p.proj_week
+    print(f"{p.name} ({p.position}, {p.pro_team or '?'}) in {lg.label}, week {wk}")
+    print(f"  ESPN projection        {esp:6.2f}")
+    if p.base_proj_week is not None and p.proj_week != p.base_proj_week:
+        print(f"  news adjustment        x{p.proj_week / p.base_proj_week:.3f} -> {p.proj_week:.2f}")
+    for r in p.reasons:
+        print(f"      {r}")
+    disc = p.status_discount()
+    if disc != 1:
+        print(f"  status discount        x{disc:.2f}  ({p.game_status} on ESPN, no news found: default)")
+    for f in p.factors:
+        print(f"  {f.name:22} x{f.multiplier:.3f}  {f.reason}")
+    print(f"  factor product         x{p.score_multiplier:.3f} (capped {cfg.factors.get('total_cap', [0.70, 1.35])})")
+    if not p.available(wk):
+        print("  cannot play this week (bye / OUT / reported out)")
+    print(f"  = worth this week      {p.lineup_value(wk):6.2f}")
+    print(f"  rest-of-season value   {p.ros_value(wk):6.1f} (x{p.ros_multiplier:.3f} from role/buzz/usage)")
+    print(f"Inputs used: ESPN" + (", news" if info["news"] else "") +
+          ("" if not info["factor_sources"] else ", " + ", ".join(info["factor_sources"])))
+    return 0
 
 
 def cmd_waivers(cfg: AppConfig, args) -> int:
     lg, reader, _ = _setup(cfg, args.league)
     state = reader.load(free_agents=True)
+    from .news.pipeline import players_to_research
+    _prepare(cfg, state, reader, args, research=players_to_research(state))
     sugg = rank_free_agents(state, limit=args.limit)
     print(f"{lg.label}: waiver ideas, week {state.scoring_period} (approval required)")
     if not sugg:
         print("  No free agent beats your weakest player by enough to matter.")
         return 0
     for i, s in enumerate(sugg, 1):
-        print(f"  {i}. add {s.add.name}, drop {s.drop.name if s.drop else '-'} [{s.kind}] {s.reason}")
+        why = f" [{'; '.join(s.add.reasons[:1])}]" if s.add.reasons else ""
+        print(f"  {i}. add {s.add.name}, drop {s.drop.name if s.drop else '-'} [{s.kind}] {s.reason}{why}")
     if args.pick is None:
         print("\nRe-run with --pick N to queue one for approval.")
         return 0
@@ -154,9 +263,9 @@ def cmd_waivers(cfg: AppConfig, args) -> int:
         payload = waiver_payload(lg.team_id, state.scoring_period, s.add.player_id, drop_id, bid=bid)
     else:
         payload = free_agent_payload(lg.team_id, state.scoring_period, s.add.player_id, drop_id)
-    summary = f"add {s.add.name}, drop {s.drop.name if s.drop else 'nobody'}, +{s.gain:.1f} ROS pts."
+    summary_text = f"add {s.add.name}, drop {s.drop.name if s.drop else 'nobody'}, +{s.gain:.1f} ROS pts."
     print()
-    return _queue(cfg, lg, s.kind, summary, payload, checks_for_add_drop(s.add.player_id, drop_id), args)
+    return _queue(cfg, lg, s.kind, summary_text, payload, checks_for_add_drop(s.add.player_id, drop_id), args)
 
 
 def cmd_trade(cfg: AppConfig, args) -> int:
@@ -169,6 +278,7 @@ def cmd_trade(cfg: AppConfig, args) -> int:
             if not p:
                 raise SystemExit(f"Player not found (or ambiguous): {n}")
             bucket.append(p)
+    _prepare(cfg, state, reader, args, research=give + get)
     try:
         ev = evaluate_trade(state, give, get)
     except ValueError as e:
@@ -178,15 +288,18 @@ def cmd_trade(cfg: AppConfig, args) -> int:
         print(f"  {side.team_name}: sends {', '.join(p.name for p in side.sends)}; "
               f"gets {', '.join(p.name for p in side.receives)}; ROS value {side.ros_delta:+.1f}, "
               f"starting lineup {side.lineup_delta:+.1f} ({side.per_week:+.1f}/wk)")
+    for p in give + get:
+        for r in p.reasons[:2]:
+            print(f"    {r}")
     print(f"Verdict: {ev.verdict}. {ev.reason}")
     if not args.propose:
         return 0
     give_ids, get_ids = [p.player_id for p in give], [p.player_id for p in get]
     payload = trade_proposal_payload(lg.team_id, ev.partner.team_id, state.scoring_period, give_ids, get_ids)
-    summary = (f"give {', '.join(p.name for p in give)} get {', '.join(p.name for p in get)} "
-               f"({ev.partner.team_name}), {ev.me.per_week:+.1f} pts/wk.")
+    summary_text = (f"give {', '.join(p.name for p in give)} get {', '.join(p.name for p in get)} "
+                    f"({ev.partner.team_name}), {ev.me.per_week:+.1f} pts/wk.")
     print("\nTrades are proposed only after your approval, never accepted automatically.")
-    return _queue(cfg, lg, "TRADE_PROPOSAL", summary, payload,
+    return _queue(cfg, lg, "TRADE_PROPOSAL", summary_text, payload,
                   checks_for_trade(give_ids, get_ids, ev.partner.team_id), args)
 
 
@@ -231,6 +344,8 @@ def approve(action_id: str, cfg: AppConfig, store: PendingStore,
     except OwnTeamViolation as e:
         store.set_status(a.id, "aborted")
         return 2, f"REFUSED (own-team guard): {e}"
+    except PacingStop as e:
+        return 4, f"#{a.id} not sent yet: {e}. It stays in the queue."
     except WriteRejected as e:
         store.set_status(a.id, "failed")
         return 3, f"ESPN rejected #{a.id}: {e.message}"
@@ -253,6 +368,7 @@ def cmd_report(cfg: AppConfig, args) -> int:
             continue
         _, reader, _ = _setup(cfg, lg.name)
         state = reader.load(free_agents=True, transactions=True)
+        _prepare(cfg, state, reader, args)
         facts = insights.build_facts(lg.label, state, optimize(state), rank_free_agents(state, limit=3))
         text, used = insights.llm_note(facts) if args.llm else (insights.template_note(facts), False)
         print(text)
@@ -271,38 +387,37 @@ def cmd_report(cfg: AppConfig, args) -> int:
     return 0
 
 
-def _pending_signature(payload: dict) -> str:
-    return f"{payload.get('type')}:" + ",".join(f"{i.get('type')}{i.get('playerId')}" for i in payload.get("items", []))
-
-
 def cmd_autopilot(cfg: AppConfig, args) -> int:
-    """Scheduler entry point. Lineups: automatic (sent only with --send AND auto_lineup: true).
-    Waivers/add-drops: queued for approval only. Texts go to the league owner."""
-    from .llm import LLM
-    from .news.pipeline import enrich
+    """Scheduler entry point. Lineups and IR: automatic (sent only with --send AND
+    auto_lineup: true). Waivers/add-drops: queued for approval only. Texts need --notify."""
     store = _store(args)
-    llm = LLM()
+    pacer = _pacer(cfg)
+    if args.jitter:
+        pacer.start_jitter()
     rc_all = 0
     leagues = [l for l in cfg.leagues if (l.fixture_dir is not None) == bool(args.demo)]
     for i, lg in enumerate(leagues, 1):
         if not lg.fixture_dir and (not lg.league_id or not lg.team_id or not load_credentials(lg.auth_profile)):
             summary(f"league {i}: skipped (not configured or no cookies)")
             continue
+        n = notify.make_notifier(cfg.notify, lg.owner) if args.notify else None
+        if not lg.fixture_dir:
+            if pacer.in_cooldown(lg.name):
+                summary(f"league {i}: paused (cooldown)")
+                continue
+            pacer.between_leagues()
         try:
             _, reader, writer = _setup(cfg, lg.name)
             state = reader.load(free_agents=True, transactions=True)
-            if not args.no_news:
-                enrich(state, llm)
-            n = notify.make_notifier(cfg.notify, lg.owner) if args.notify else None
+            _prepare(cfg, state, reader, args)
             res = optimize(state)
-            status = "no changes"
-            if res.moves:
-                send = bool(args.send and cfg.settings.auto_lineup)
-                rc = _submit(writer, lineup_payload(lg.team_id, state.scoring_period, res.moves), send)
-                rc_all = rc_all or rc
-                status = ("sent" if send else "dry-run") if rc == 0 else f"failed (rc {rc})"
-                if n and rc == 0:
-                    n.send(notify.msg_lineup_changes(lg.label, res, sent=send))
+            send = bool(args.send and cfg.settings.auto_lineup)
+            rc, status = _apply_lineup(cfg, lg, writer, state, res, send, args)
+            rc_all = rc_all or rc
+            if rc == 4 and n:
+                n.send(notify.msg_paused(lg.label, "ESPN pushed back or a write cap was hit"))
+            if n and rc == 0 and (res.moves or res.ir_moves):
+                n.send(notify.msg_lineup_changes(lg.label, res, sent=send))
             hurt = notify.msg_starter_injuries(lg.label, state)
             if n and hurt:
                 n.send(hurt)
@@ -323,7 +438,14 @@ def cmd_autopilot(cfg: AppConfig, args) -> int:
                     queued += 1
                     if n:
                         n.send(notify.msg_pending(a))
-            summary(f"league {i}: {len(res.moves)} moves, {status}; {queued} queued for approval")
+            moves = len(res.moves) + len(res.ir_moves)
+            summary(f"league {i}: {moves} moves, {status}; {queued} queued for approval")
+        except PacingStop as e:
+            rc_all = rc_all or 4
+            summary(f"league {i}: paused (ESPN pushed back)")
+            print(f"{lg.label}: {e}")
+            if n:
+                n.send(notify.msg_paused(lg.label, str(e)))
         except Exception as e:   # one league failing never stops the others
             rc_all = rc_all or 1
             summary(f"league {i}: error ({type(e).__name__})")
@@ -333,6 +455,13 @@ def cmd_autopilot(cfg: AppConfig, args) -> int:
 
 def cmd_poll_telegram(cfg: AppConfig, args) -> int:
     from .telegram_poll import poll
+    for line in poll(cfg, _store(args)):
+        summary(line)
+    return 0
+
+
+def cmd_poll_imessage(cfg: AppConfig, args) -> int:
+    from .imessage_poll import poll
     for line in poll(cfg, _store(args)):
         summary(line)
     return 0
@@ -356,23 +485,35 @@ def build_parser() -> argparse.ArgumentParser:
     ap.add_argument("--store", help="pending-actions JSON (default data/pending.json)")
     ap.add_argument("--quiet", action="store_true", help="CI-safe output: counts only")
     sub = ap.add_subparsers(dest="cmd", required=True)
+
+    def evidence(p):
+        p.add_argument("--no-news", action="store_true", help="skip the news/buzz layer")
+        p.add_argument("--no-factors", action="store_true", help="skip matchup/Vegas/weather/usage factors")
+
     sub.add_parser("leagues", help="list configured leagues")
-    p = sub.add_parser("lineup", help="optimize lineup (dry-run unless --send)")
+    p = sub.add_parser("lineup", help="optimize lineup + IR (dry-run unless --send)")
     p.add_argument("league")
     p.add_argument("--send", action="store_true", help="really submit to ESPN (own team only)")
     p.add_argument("--notify", action="store_true")
+    evidence(p)
+    p = sub.add_parser("explain", help="factor breakdown for one player")
+    p.add_argument("league")
+    p.add_argument("player")
+    evidence(p)
     p = sub.add_parser("waivers", help="rank free agents vs your weakest players")
     p.add_argument("league")
     p.add_argument("--limit", type=int, default=5)
     p.add_argument("--pick", type=int, help="queue suggestion N for approval")
     p.add_argument("--bid", type=int, default=0, help="FAAB bid (ignored in no-FAAB leagues)")
     p.add_argument("--notify", action="store_true")
+    evidence(p)
     p = sub.add_parser("trade", help="evaluate a trade")
     p.add_argument("league")
     p.add_argument("--give", action="append", required=True)
     p.add_argument("--get", action="append", required=True)
     p.add_argument("--propose", action="store_true", help="queue a TRADE_PROPOSAL for approval")
     p.add_argument("--notify", action="store_true")
+    evidence(p)
     sub.add_parser("pending", help="list queued actions")
     p = sub.add_parser("approve", help="re-check and send a queued action")
     p.add_argument("id")
@@ -380,28 +521,33 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("id")
     p = sub.add_parser("report", help="weekly note per league")
     p.add_argument("league", nargs="?")
-    p.add_argument("--llm", action="store_true", help="rewrite with `claude -p` (numbers checked)")
+    p.add_argument("--llm", action="store_true", help="rewrite with an LLM (numbers checked)")
     p.add_argument("--notify", action="store_true")
-    p = sub.add_parser("autopilot", help="scheduled run: lineups, news, waiver approvals, texts")
+    evidence(p)
+    p = sub.add_parser("autopilot", help="scheduled run: news, lineups + IR, waiver approvals, texts")
     p.add_argument("--send", action="store_true", help="really set lineups (needs auto_lineup: true)")
     p.add_argument("--waivers", action="store_true", help="also queue top waiver ideas for approval")
-    p.add_argument("--no-news", action="store_true", help="skip the news/buzz layer")
+    p.add_argument("--jitter", action="store_true", help="random 0-10 min start delay (scheduled runs)")
     p.add_argument("--notify", action="store_true")
     p.add_argument("--demo", action="store_true", help="run on fixture leagues only")
+    evidence(p)
     sub.add_parser("poll-telegram", help="process 'approve N' / 'reject N' replies")
+    sub.add_parser("poll-imessage", help="process 'approve N' / 'reject N' iMessage replies (macOS)")
     p = sub.add_parser("state", help="encrypted CI state")
     p.add_argument("action", choices=["keygen", "pack", "unpack"])
     return ap
 
 
 def main(argv: list[str] | None = None) -> int:
+    global _PACER
     args = build_parser().parse_args(argv)
     quiet = args.quiet or os.environ.get("FAI_QUIET") == "1"
     SUMMARY.clear()
-    handler = {"leagues": cmd_leagues, "lineup": cmd_lineup, "waivers": cmd_waivers,
+    _PACER = None
+    handler = {"leagues": cmd_leagues, "lineup": cmd_lineup, "explain": cmd_explain, "waivers": cmd_waivers,
                "trade": cmd_trade, "pending": cmd_pending, "approve": cmd_approve,
                "reject": cmd_reject, "report": cmd_report, "autopilot": cmd_autopilot,
-               "poll-telegram": cmd_poll_telegram, "state": cmd_state}[args.cmd]
+               "poll-telegram": cmd_poll_telegram, "poll-imessage": cmd_poll_imessage, "state": cmd_state}[args.cmd]
     if not quiet:
         cfg = load_config(args.config)
         try:
@@ -409,6 +555,9 @@ def main(argv: list[str] | None = None) -> int:
         except KeyError as e:
             print(e.args[0] if e.args else e)
             rc = 1
+        except PacingStop as e:
+            print(f"STOPPED (pacing): {e}")
+            rc = 4
         for line in SUMMARY:
             print(line)
         return rc

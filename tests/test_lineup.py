@@ -71,7 +71,9 @@ def test_questionable_still_starts_but_ir_status_benched():
     e = [b.entry(b.player(1, "Q", "QB", 20, injury="QUESTIONABLE"), 20),
          b.entry(b.player(2, "Q2", "QB", 10, injury="INJURY_RESERVE"), 0)]
     res = optimize(make_state(e))
-    assert res.target[1] == 0 and res.target[2] == BENCH
+    assert res.target[1] == 0 and res.target[2] == IR          # benched, then moved to the open IR slot
+    assert [(m.player_id, m.from_slot, m.to_slot) for m in res.moves] == [(2, 0, BENCH), (1, BENCH, 0)]
+    assert [(m.player_id, m.from_slot, m.to_slot) for m in res.ir_moves] == [(2, BENCH, IR)]
 
 
 def test_empty_slot_left_empty_rather_than_starting_bye():

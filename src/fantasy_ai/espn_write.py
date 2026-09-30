@@ -202,18 +202,21 @@ def describe_dry_run(url: str, payload: dict) -> str:
 
 
 class TransactionWriter:
-    """send=False (default) only prints. send=True posts once, then verifies by reading back.
+    """send=False (default) only prints. send=True posts ONCE, then verifies by reading back.
 
-    readback: returns {playerId: lineupSlotId} for our team, used to verify a success and,
-    after a timeout, to decide whether a retry is safe (jwulff 8.1: a timed-out write is not
-    a failed write; a blind waiver retry can double-spend FAAB).
+    readback: returns {playerId: lineupSlotId} for our team. After a timeout it tells us whether
+    the write landed (jwulff 8.1: a timed-out write is not a failed write). There are no
+    automatic retries at all: if the read-back shows nothing changed, the next scheduled run
+    tries again. 401/403/429 or any unexpected non-409 status sets a pacing cooldown.
     """
 
     def __init__(self, cfg: LeagueConfig, creds: Credentials | None,
                  readback: Callable[[], dict[int, int]] | None = None,
-                 transport: httpx.BaseTransport | None = None, timeout: float = 15.0):
+                 transport: httpx.BaseTransport | None = None, timeout: float = 15.0, pacer=None):
+        from .pacing import NoPacer, Pacer
         self.cfg, self.creds, self.readback = cfg, creds, readback
         self.transport, self.timeout = transport, timeout
+        self.pacer = pacer or (NoPacer() if cfg.fixture_dir or transport is not None else Pacer())
 
     def submit(self, payload: dict, send: bool = False) -> WriteResult:
         check_own_team(payload, self.cfg)          # always, dry-run included
@@ -224,12 +227,20 @@ class TransactionWriter:
             raise OwnTeamViolation("This league is an offline fixture; refusing to send.")
         if not self.creds:
             raise WriteRejected(0, None, f"No cookies for profile '{self.cfg.auth_profile}'. Add ESPN_S2_{self.cfg.auth_profile.upper()} to .env.")
-        return self._post_with_readback(url, payload)
+        self.pacer.check_write(self.cfg.name)      # cooldown, per-run and per-day caps, write gap
+        try:
+            return self._post_with_readback(url, payload)
+        except WriteRejected as e:
+            if e.status in (401, 403, 429) or (e.status >= 300 and e.status not in (400, 409)):
+                from .pacing import PacingStop
+                raise PacingStop(self.pacer.cooldown(self.cfg.name, f"HTTP {e.status}")) from e
+            raise
 
     def _post(self, url: str, payload: dict) -> dict:
         with httpx.Client(transport=self.transport, timeout=self.timeout, follow_redirects=False,
                           cookies=self.creds.cookies()) as client:  # no redirects: never leak the cookie to another host
-            r = client.post(url, json=payload, headers=WRITE_HEADERS)
+            from .pacing import BROWSER_UA
+            r = client.post(url, json=payload, headers={**WRITE_HEADERS, "User-Agent": BROWSER_UA})
         try:
             body = r.json()
         except ValueError:
@@ -256,15 +267,17 @@ class TransactionWriter:
         try:
             resp = self._post(url, payload)
         except (httpx.TimeoutException, httpx.TransportError) as e:
-            # Unknown state. Read the roster back BEFORE any retry.
+            # Unknown state: read the roster back. Never resend here.
             applied = self._applied(payload)
+            self.pacer.record_write(self.cfg.name)
             if applied:
                 return WriteResult(True, url, payload, None, "Network error, but the roster shows the change went through.")
-            if applied is False and payload["type"] == TX_ROSTER:
-                resp = self._post(url, payload)   # lineup retry is safe: roster confirms nothing applied
-            else:
-                raise WriteRejected(0, None, f"Network error ({type(e).__name__}) and the result is unknown. "
-                                             "Check the league's transactions page before trying again; do not resend blindly.") from e
+            if applied is False:
+                raise WriteRejected(0, None, f"Network error ({type(e).__name__}); read-back shows nothing changed. "
+                                             "Not retrying; the next scheduled run will try again.") from e
+            raise WriteRejected(0, None, f"Network error ({type(e).__name__}) and the result is unknown. "
+                                         "Check the league's transactions page; do not resend blindly.") from e
+        self.pacer.record_write(self.cfg.name)
         status = resp.get("status", "")
         applied = self._applied(payload)
         msg = f"ESPN status: {status or 'unknown'}."
