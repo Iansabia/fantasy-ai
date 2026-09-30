@@ -89,7 +89,10 @@ fai report demo
 - **Trades:** raw value swap plus the change in each team's best starting lineup.
 - **Team-need trade ideas** (`fai trade-ideas <league>`): value to a team is what its best lineups are
   worth (next 3 weeks + rest of season + a small credit for first backups), computed on each team's
-  own roster. So a 3rd QB in a 1-QB league is worth little to you and a lot to a team whose QB is
+  own roster. Any lineup slot can also be filled at replacement level (the waiver wire), so an
+  injured starter counts at replacement, not zero. One function (`teamneeds.lineup_change`) gives
+  both teams' lineup change for `fai trade` and for trade ideas, including forced drops when a side
+  goes over the roster limit (its lowest-value bench players, never its last QB / K / D/ST). So a 3rd QB in a 1-QB league is worth little to you and a lot to a team whose QB is
   weak or on bye. For each target (1 or 2 of their players) it searches give packages of 1-3 of
   ours and keeps the cheapest that works: players who cost our lineup little (backups the incoming
   player makes redundant) at a market price close to even (no penalty at 90-105% of FantasyCalc,

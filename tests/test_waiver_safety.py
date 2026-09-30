@@ -173,3 +173,13 @@ def test_second_qb_or_te_is_not_useful_depth_unless_a_starter_is_out_or_on_bye()
     assert not waivers._useful_depth(goedert, s.roster, s, cfg)       # backup TE behind a healthy starter
     s.find_player("Dak Prescott").injury_status = "OUT"
     assert waivers._useful_depth(goff, s.roster, s, cfg) or waivers._useful_depth(s.find_player("Matthew Stafford"), s.roster, s, cfg)
+
+
+def test_explain_kicker_swap_wording():
+    from fantasy_ai.espn_read import parse_player
+    s = friendly()
+    loop = parse_player(b.fa_row(b.player(91, "Tyler Loop", "K", 11.5, season=190)), 2026, 4, {})
+    s.free_agents.append(loop)
+    text = waivers.swap_view(s, loop, waivers.merged(None))
+    assert text.startswith("kicker swap: projects 11.5 vs your starter Jason Myers 10.5")
+    assert "needs +1.5" in text and "not suggested" in text

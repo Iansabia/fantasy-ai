@@ -6,6 +6,8 @@ Value to a team = what its best lineups are worth, not the sum of its players:
                      + small depth credit for the first backups (1 QB, 2 RB, 2 WR, 1 TE;
                        +1 QB in superflex), counted ABOVE REPLACEMENT (vorp.py), so a backup QB
                        in a 1-QB league adds ~nothing: any team can find a similar QB on waivers
+Every lineup slot can also be filled by a virtual replacement-level player (the waiver wire), so
+an injured or weak starter counts at replacement, never zero.
 A trade's gain for a side is team_value(after) - team_value(before), computed on THAT team's
 roster, so surplus (a 3rd QB in a 1-QB league) is worth little to us and a lot to a team whose
 QB is hurt or on bye.
@@ -52,6 +54,28 @@ def season_value(p: Player) -> float:
     return p.per_game() * p.ros_multiplier
 
 
+ELIGIBLE = {"QB": [0, 7], "RB": [2, 3, 23, 7], "WR": [3, 4, 5, 23, 7], "TE": [5, 6, 23, 7]}
+
+
+def _replacements(state: LeagueState) -> list[Player]:
+    """Virtual waiver-wire players at replacement level, one per slot a position can fill.
+    Any team can plug a hole (injured or empty starter) with one of these, so a trade only
+    'helps' a lineup by what it adds ABOVE replacement, not by filling a zero."""
+    from .vorp import replacement_levels
+    repl = replacement_levels(state)
+    c = state.slot_counts
+    counts = {"QB": c.get(0, 0) + c.get(7, 0), "RB": c.get(2, 0) + c.get(23, 0),
+              "WR": c.get(4, 0) + c.get(23, 0), "TE": c.get(6, 0)}
+    out = []
+    for pos, n in counts.items():
+        for i in range(n):
+            v = Player(player_id=-(900000 + 100 * POSITIONS.index(pos) + i), name=f"replacement {pos}", position=pos,
+                       eligible_slots=ELIGIBLE[pos])
+            v._repl = repl[pos]
+            out.append(v)
+    return out
+
+
 def team_value(roster: list[Player], state: LeagueState, cache: dict | None = None) -> float:
     cache = {} if cache is None else cache
     key = frozenset(p.player_id for p in roster)
@@ -60,14 +84,33 @@ def team_value(roster: list[Player], state: LeagueState, cache: dict | None = No
     cfg = waiver_cfg(None)
     starting = {s: c for s, c in state.slot_counts.items() if s not in NON_STARTING}
     active = [p for p in roster if not p.on_ir_slot]
+    if "_repl" not in cache:
+        cache["_repl"] = _replacements(state)
+    virt_all = cache["_repl"]
+
+    def needed(vals: dict) -> list[Player]:
+        """Only as many replacements per position as real players above replacement leave open
+        (keeps the lineup search small; extra ones could never be picked)."""
+        out, by_pos = [], {}
+        for v in virt_all:
+            by_pos.setdefault(v.position, []).append(v)
+        for pos, vs in by_pos.items():
+            good = sum(1 for p in active if p.position == pos and vals.get(p.player_id, 0) > vs[0]._repl)
+            out += vs[:max(0, len(vs) - good)]
+        return out
+
     near = 0.0
     for k in range(H):
         vals = {p.player_id: week_worth(p, state, k, cfg) for p in active}
-        t, _ = best_assignment([p for p in active if vals[p.player_id] > 0], starting,
+        virt = needed(vals)
+        vals.update({v.player_id: v._repl for v in virt})
+        t, _ = best_assignment([p for p in active if vals[p.player_id] > 0] + virt, starting,
                                lambda p, s: vals[p.player_id] + 1e-6)
         near += t
     weeks_after = max(0, SEASON_WEEKS - state.scoring_period + 1 - H)
-    t, assign = best_assignment(active, starting, lambda p, s: season_value(p) + 1e-6)
+    virt = needed({p.player_id: season_value(p) for p in active})
+    t, assign = best_assignment(active + virt, starting,
+                                lambda p, s: (getattr(p, "_repl", None) or season_value(p)) + 1e-6)
     far = t * weeks_after
     depth = 0.0
     starters = set(assign)
@@ -79,6 +122,51 @@ def team_value(roster: list[Player], state: LeagueState, cache: dict | None = No
     v = round(near + far + depth, 1)
     cache[key] = v
     return v
+
+
+def roster_limit(state: LeagueState) -> int:
+    from .slots import IR
+    return sum(c for s, c in state.slot_counts.items() if s != IR)
+
+
+def forced_drops(roster: list[Player], state: LeagueState) -> list[Player]:
+    """Players a team must cut when a trade puts it over the roster limit: its lowest-value bench
+    players (value above replacement per game; a 2nd K / D/ST is worth 0), never breaking roster
+    minimums (1 K, 1 D/ST, 1 QB or 2 with superflex). Received players can be cut too."""
+    active = [p for p in roster if not p.on_ir_slot]
+    extra = len(active) - roster_limit(state)
+    if extra <= 0:
+        return []
+    starting = {s: c for s, c in state.slot_counts.items() if s not in NON_STARTING}
+    _, assign = best_assignment(active, starting, lambda p, s: season_value(p) + 1e-6)
+    mins = {"QB": 1 + (1 if state.slot_counts.get(7) else 0), "K": 1 if state.slot_counts.get(17) else 0,
+            "D/ST": 1 if state.slot_counts.get(16) else 0}
+    count = {pos: sum(1 for p in active if p.position == pos) for pos in mins}
+    out = []
+    for p in sorted([p for p in active if p.player_id not in assign], key=lambda p: vorp_pg(p, state)):
+        if len(out) >= extra:
+            break
+        if p.position in mins and count[p.position] <= mins[p.position]:
+            continue
+        if p.position in count:
+            count[p.position] -= 1
+        out.append(p)
+    return out
+
+
+def lineup_change(state: LeagueState, team_id: int, sends: list[Player], receives: list[Player],
+                  cache: dict | None = None) -> tuple[float, list[Player]]:
+    """THE lineup delta for one side of a trade, used by both `fai trade` and trade ideas:
+    team_value(after, with forced drops if over the roster limit) - team_value(before).
+    Returns (delta in ROS lineup points, players they would have to drop)."""
+    team = state.teams[team_id]
+    out = {p.player_id for p in sends}
+    after = [p for p in team.roster if p.player_id not in out] + list(receives)
+    drops = forced_drops(after, state)
+    if drops:
+        cut = {p.player_id for p in drops}
+        after = [p for p in after if p.player_id not in cut]
+    return round(team_value(after, state, cache) - team_value(team.roster, state, cache), 1), drops
 
 
 # ---------------------------------------------------------------- scouting
@@ -203,6 +291,7 @@ class Idea:
     give_cost: dict[int, float] = field(default_factory=dict)   # lineup points each give costs us (get included)
     price: float = 1.0                  # 1.0 inside the fair band, lower when we overpay / underpay a lot
     sweetened: "Idea | None" = None     # easier-to-accept version when this one is a hard sell
+    their_drops: list = field(default_factory=list)   # players they must cut to fit the roster limit
 
     @property
     def overpay(self) -> float | None:
@@ -298,6 +387,7 @@ def trade_ideas(state: LeagueState, prefs=None, top: int = 8, min_gain: float = 
             return team_value(me.roster + [p], state, cache) - base_me
 
         get_pool = sorted(theirs, key=our_add, reverse=True)[:pool]
+        need_pos = set(pf.holes) | {d.split(" ", 1)[0] for d in pf.desperation}
         targets = [[r] for r in get_pool] + [list(r2) for r2 in itertools.combinations(get_pool, 2)]
         for get in targets:
             r_ids = {p.player_id for p in get}
@@ -317,17 +407,24 @@ def trade_ideas(state: LeagueState, prefs=None, top: int = 8, min_gain: float = 
                     if not include_lopsided and ratio >= MAX_OVERPAY:
                         continue
                     est = sum(cost[p.player_id] for p in give)
-                    quick.append((est + 40 * (1 - price_factor(ratio)), give, ratio, fg, ft))
-            quick.sort(key=lambda x: x[0])
+                    helps = sum(max(0.0, vorp_ros(p, state)) for p in give if p.position in need_pos)
+                    quick.append((est + 40 * (1 - price_factor(ratio)), give, ratio, fg, ft, helps))
+            # two shortlists: cheapest for us, and cheap-for-us packages that fill THEIR needs
+            # (a package can only pass Ian's rule if it helps them, so search there too)
+            by_cost = sorted(quick, key=lambda x: x[0])[:PER_TARGET]
+            by_need = sorted(quick, key=lambda x: x[0] - 0.5 * x[5])[:PER_TARGET]
+            seen_pk, quick = set(), []
+            for x in by_cost + by_need:
+                k = frozenset(p.player_id for p in x[1])
+                if k not in seen_pk:
+                    seen_pk.add(k)
+                    quick.append(x)
             group = []
-            for _, give, ratio, fg, ft in quick[:PER_TARGET]:
-                g_ids = {p.player_id for p in give}
-                ours_after = [p for p in me.roster if p.player_id not in g_ids] + get
-                theirs_after = [p for p in t.roster if p.player_id not in r_ids] + list(give)
-                our_gain = round(team_value(ours_after, state, cache) - base_me, 1)
+            for _, give, ratio, fg, ft, _h in quick:
+                our_gain, _ = lineup_change(state, state.my_team_id, list(give), get, cache)
                 if our_gain < min_gain:
                     continue
-                their_gain = round(team_value(theirs_after, state, cache) - base_them, 1)
+                their_gain, their_drops = lineup_change(state, tid, get, list(give), cache)
                 if their_gain < -MAX_THEIR_LOSS:
                     continue
                 if not include_lopsided and not wins_both_ways(our_gain, their_gain, ratio, pf, give, min_gain):
@@ -341,7 +438,8 @@ def trade_ideas(state: LeagueState, prefs=None, top: int = 8, min_gain: float = 
                 group.append(Idea(tid, t.name.strip(), list(give), get, our_gain, their_gain, fg, ft,
                                   round(min(ratio, 1 / ratio), 2), accept, score, _why_partner(pf, give, get, n),
                                   _pitch(pf, give, get, their_gain, n),
-                                  give_cost={p.player_id: cost[p.player_id] for p in give}, price=round(price, 2)))
+                                  give_cost={p.player_id: cost[p.player_id] for p in give}, price=round(price, 2),
+                                  their_drops=their_drops))
             if group:
                 groups.append(group)
     out = []

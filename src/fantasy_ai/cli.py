@@ -285,9 +285,11 @@ def cmd_explain(cfg: AppConfig, args) -> int:
         for r in p.hype.reasons:
             print(f"      - {r}")
     if p.status in ("FREEAGENT", "WAIVERS"):
-        from .waivers import evaluate_add
+        from .waivers import SPECIAL, evaluate_add, merged, swap_view
         w = evaluate_add(state, p, _prefs(lg, state), cfg.waivers)
-        if w is None:
+        if w is None and p.position in SPECIAL:
+            print(f"  {swap_view(state, p, merged(cfg.waivers))}")
+        elif w is None:
             print("  waiver view: no legal drop (roster minimums / bye coverage)")
         else:
             verdict = "worth it" if w.gain >= w.threshold else f"below the +{w.threshold:.0f} bar"
@@ -386,6 +388,8 @@ def cmd_trade(cfg: AppConfig, args) -> int:
               f"gets {', '.join(p.name for p in side.receives)}; ROS value above replacement {side.ros_delta:+.1f}, "
               f"starting lineup {side.lineup_delta:+.1f} ({side.per_week:+.1f}/wk); "
               f"market (FantasyCalc) sends {fc(side.sends)} / gets {fc(side.receives)}")
+        if side.drops:
+            print(f"    over the roster limit: {side.team_name} would have to drop {', '.join(p.name for p in side.drops)} (counted)")
     from .hype import line as hype_line
     for p in give + get:
         if hype_line(p):
@@ -484,6 +488,8 @@ def cmd_trade_ideas(cfg: AppConfig, args) -> int:
         tag = " (HARD SELL)" if idea.hard_sell else ""
         print(f"     lineup ROS: ours {idea.our_gain:+.1f}, theirs {idea.their_gain:+.1f}{tag}; acceptance {idea.accept:.0%}")
         print(f"     what each give costs our lineup: {costs(idea)}")
+        if idea.their_drops:
+            print(f"     roster limit: they would drop {', '.join(p.name for p in idea.their_drops)} (counted above)")
         print(f"     why this partner: {idea.why_partner}")
         for p in idea.give + idea.get:
             if hype_line(p) and p.hype.label != "Steady":

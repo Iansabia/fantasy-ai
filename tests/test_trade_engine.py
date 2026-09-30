@@ -202,3 +202,49 @@ def test_hard_sell_carries_sweetened_alternative():
     for i in teamneeds.trade_ideas(s, Prefs(), top=50, include_lopsided=True):
         if i.hard_sell and i.sweetened is not None:
             assert not i.sweetened.hard_sell and _ids(i.sweetened.get) == _ids(i.get)
+
+
+def test_dst_negative_ids_do_not_confuse_replacement_players():
+    s = league()
+    for t in s.teams.values():
+        for p in t.roster:
+            if p.position == "D/ST":
+                p.player_id = -16000 - t.team_id          # ESPN D/ST ids are negative
+    assert teamneeds.team_value(s.my_team.roster, s) > 0
+
+
+# ---- one lineup-delta function for trade ideas and `fai trade`
+
+def test_trade_ideas_partner_delta_equals_evaluate_trade():
+    from fantasy_ai.trades import evaluate_trade
+    for s in (league(), kelce_league()):
+        for i in teamneeds.trade_ideas(s, Prefs(), top=6, include_lopsided=True):
+            ev = evaluate_trade(s, i.give, i.get)
+            assert ev.me.lineup_delta == i.our_gain and ev.partner.lineup_delta == i.their_gain
+
+
+def test_forced_drops_counted_when_partner_goes_over_roster_limit():
+    s = kelce_league()
+    bread = s.teams[2]
+    from fantasy_ai.espn_read import parse_player
+    fill = [parse_player(b.entry(b.player(300 + k, f"Filler {k}", "WR", 1.0, season=10), 20, team_id=2), 2026, 4, {})
+            for k in range(teamneeds.roster_limit(s) - len(bread.roster))]
+    for f in fill:
+        f.on_team_id = 2
+    bread.roster.extend(fill)                                    # Bread is now exactly at the limit
+    give = [s.find_player(n) for n in ("Jameson Williams", "Dallas Goedert", "Stafford Qb")]
+    delta, drops = teamneeds.lineup_change(s, 2, [s.find_player("Travis Kelce")], give)
+    assert len(drops) == 2 and all(d.position != "K" for d in drops)
+    assert not {d.name for d in drops} & {"Weak Qb"}             # last QB is never cut
+
+
+def test_replacement_floor_injured_starter_counts_as_waiver_level_not_zero():
+    s = league()
+    tc = s.teams[3]
+    wr1 = s.find_player("T3 Wr1")
+    base = teamneeds.team_value(tc.roster, s)
+    wr1.injury_status = "OUT"
+    hurt = teamneeds.team_value(tc.roster, s, {})
+    assert hurt < base                                           # losing a starter this week still costs
+    # but only his value above a replacement WR this week, not his whole week
+    assert base - hurt < wr1.proj_week

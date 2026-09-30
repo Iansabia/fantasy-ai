@@ -421,6 +421,21 @@ def rank_free_agents(state: LeagueState, limit: int = 5, min_gain: float | None 
     return unique[:limit]
 
 
+def swap_view(state: LeagueState, p: Player, cfg: dict) -> str:
+    """explain line for a free-agent K / D/ST: they only ever replace our starter (streamer path)."""
+    wk = state.scoring_period
+    word = "kicker" if p.position == "K" else "defense"
+    ours = [q for q in state.roster if q.position == p.position and not q.on_ir_slot]
+    if not ours:
+        return f"{word} swap: we have no {p.position}; projects {p.lineup_value(wk):.1f} this week"
+    mine = max(ours, key=lambda q: q.lineup_value(wk))
+    edge = p.lineup_value(wk) - mine.lineup_value(wk)
+    verdict = "would be suggested" if edge >= cfg["stream_margin"] else "not suggested"
+    return (f"{word} swap: projects {p.lineup_value(wk):.1f} vs your starter {mine.name} {mine.lineup_value(wk):.1f} "
+            f"({edge:+.1f}; needs +{cfg['stream_margin']:.1f} to suggest, {verdict}). "
+            f"A {p.position} is never added as an extra bench player.")
+
+
 def streamers(state: LeagueState, prefs=None, cfg: dict | None = None) -> list[WaiverSuggestion]:
     """K and D/ST free agents who beat our starter this week (matchup, Vegas, weather)."""
     from .factors.score import top_reasons
