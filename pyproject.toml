@@ -1,0 +1,24 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "fantasy-ai"
+version = "0.1.0"
+description = "AI fantasy football manager for ESPN leagues (plain-code decisions, LLM only explains)"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+dependencies = ["espn-api", "pyyaml", "httpx", "python-dotenv"]
+
+[project.optional-dependencies]
+dev = ["pytest", "cryptography"]
+ci = ["anthropic", "cryptography"]   # Anthropic API fallback when no claude CLI; encrypted state
+
+[project.scripts]
+fai = "fantasy_ai.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

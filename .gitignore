@@ -1,0 +1,13 @@
+.venv/
+__pycache__/
+*.pyc
+*.egg-info/
+.pytest_cache/
+# secrets and personal config
+.env
+.env.*
+!.env.example
+config/leagues.yaml
+data/
+.state/
+refs/

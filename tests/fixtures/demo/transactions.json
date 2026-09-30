@@ -1,0 +1,28 @@
+{
+ "transactions": [
+  {
+   "id": "t1",
+   "type": "WAIVER",
+   "status": "EXECUTED",
+   "teamId": 2,
+   "bidAmount": 0,
+   "items": [
+    {
+     "type": "ADD",
+     "playerId": 314
+    },
+    {
+     "type": "DROP",
+     "playerId": 999
+    }
+   ]
+  },
+  {
+   "id": "t2",
+   "type": "ROSTER",
+   "status": "EXECUTED",
+   "teamId": 1,
+   "items": []
+  }
+ ]
+}

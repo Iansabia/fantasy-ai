@@ -1,0 +1,98 @@
+# fantasy-ai autopilot. Public-repo safe:
+# - league config and cookies come only from secrets; nothing personal is committed
+# - every command runs with --quiet: logs show counts only ("league 1: 2 moves, sent")
+# - state (pending approvals, news cache) is Fernet-encrypted (STATE_KEY) before actions/cache
+# - DRY RUN unless the repo variable LIVE is "true"
+#
+# Secrets: LEAGUES_YAML, ESPN_S2_COUSIN, SWID_COUSIN, TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID,
+#          ANTHROPIC_API_KEY, STATE_KEY   (add ESPN_S2_IAN / SWID_IAN for Ian's own leagues)
+# Variable: LIVE=true to really set lineups / send approved moves.
+#
+# Cron is UTC. ET = UTC-4 until 2026-11-01, then UTC-5. Times below are ~1 hour before lock
+# under EDT and ~2 hours before under EST (GitHub cron can start 5-30 min late).
+name: autopilot
+
+on:
+  schedule:
+    - cron: "15 23 * 9-12,1 4"   # Thu 7:15pm EDT, before TNF 8:15pm kickoff
+    - cron: "0 16 * 9-12,1 0"    # Sun 12:00pm EDT, before 1pm games
+    - cron: "0 19 * 9-12,1 0"    # Sun 3:00pm EDT, before 4:05/4:25 games
+    - cron: "15 23 * 9-12,1 0"   # Sun 7:15pm EDT, before SNF 8:20pm
+    - cron: "15 23 * 9-12,1 1"   # Mon 7:15pm EDT, before MNF 8:15pm
+    - cron: "0 14 * 9-12,1 2,3"  # Tue/Wed 10am EDT: waiver suggestions (approval queue)
+    - cron: "*/30 * * 9-12,1 *"  # every 30 min in season: read Telegram approvals
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "lineup | waivers | poll"
+        default: lineup
+
+concurrency:
+  group: fantasy-ai          # never two runs at once (no double sends, no state races)
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      CI: "true"
+      FAI_QUIET: "1"
+      FAI_NOTIFY_BACKEND: telegram
+      LEAGUES_YAML: ${{ secrets.LEAGUES_YAML }}
+      ESPN_S2_COUSIN: ${{ secrets.ESPN_S2_COUSIN }}
+      SWID_COUSIN: ${{ secrets.SWID_COUSIN }}
+      ESPN_S2_IAN: ${{ secrets.ESPN_S2_IAN }}
+      SWID_IAN: ${{ secrets.SWID_IAN }}
+      TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+      TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      STATE_KEY: ${{ secrets.STATE_KEY }}
+      FAI_LLM_MAX_CALLS: "12"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -q -e '.[ci]'
+
+      - name: Pick mode
+        id: mode
+        run: |
+          case "${{ github.event.schedule }}" in
+            "*/30 * * 9-12,1 *") echo "mode=poll" >> "$GITHUB_OUTPUT" ;;
+            "0 14 * 9-12,1 2,3") echo "mode=waivers" >> "$GITHUB_OUTPUT" ;;
+            "") echo "mode=${{ github.event.inputs.mode || 'lineup' }}" >> "$GITHUB_OUTPUT" ;;
+            *) echo "mode=lineup" >> "$GITHUB_OUTPUT" ;;
+          esac
+
+      - name: Restore encrypted state
+        uses: actions/cache/restore@v4
+        with:
+          path: .state/state.enc
+          key: fai-state-${{ github.run_id }}
+          restore-keys: fai-state-
+      - run: fai state unpack
+
+      - name: Lineups (automatic)
+        if: steps.mode.outputs.mode == 'lineup'
+        run: fai autopilot --notify ${{ vars.LIVE == 'true' && '--send' || '' }}
+      - name: Waiver suggestions (approval queue only)
+        if: steps.mode.outputs.mode == 'waivers'
+        run: fai autopilot --notify --waivers
+      - name: Telegram approvals
+        if: steps.mode.outputs.mode == 'poll'
+        run: |
+          if [ "${{ vars.LIVE }}" = "true" ]; then fai poll-telegram; else echo "poll skipped: dry run (LIVE is not true)"; fi
+
+      - name: Save encrypted state
+        if: always()
+        run: fai state pack
+      - uses: actions/cache/save@v4
+        if: always()
+        with:
+          path: .state/state.enc
+          key: fai-state-${{ github.run_id }}

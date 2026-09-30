@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- NOT INSTALLED. Local alternative to GitHub Actions. Replace __REPO__ with the repo path,
+     copy to ~/Library/LaunchAgents/, then: launchctl load ~/Library/LaunchAgents/com.fantasyai.lineups.plist
+     launchd uses the Mac's local clock; times assume the Mac is on Eastern time.
+     Weekday: 0=Sun 1=Mon 4=Thu. Remove --send to keep it dry-run. -->
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>com.fantasyai.lineups</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>__REPO__/.venv/bin/fai</string>
+    <string>autopilot</string>
+    <string>--notify</string>
+    <string>--send</string>
+  </array>
+  <key>WorkingDirectory</key><string>__REPO__</string>
+  <key>StartCalendarInterval</key>
+  <array>
+    <dict><key>Weekday</key><integer>4</integer><key>Hour</key><integer>18</integer><key>Minute</key><integer>0</integer></dict>
+    <dict><key>Weekday</key><integer>0</integer><key>Hour</key><integer>11</integer><key>Minute</key><integer>30</integer></dict>
+    <dict><key>Weekday</key><integer>0</integer><key>Hour</key><integer>15</integer><key>Minute</key><integer>45</integer></dict>
+    <dict><key>Weekday</key><integer>1</integer><key>Hour</key><integer>18</integer><key>Minute</key><integer>30</integer></dict>
+  </array>
+  <key>StandardOutPath</key><string>__REPO__/data/launchd.log</string>
+  <key>StandardErrorPath</key><string>__REPO__/data/launchd.log</string>
+</dict>
+</plist>

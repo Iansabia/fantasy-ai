@@ -1,0 +1,36 @@
+{
+ "settings": {
+  "proTeams": [
+   {
+    "id": 1,
+    "abbrev": "AAA",
+    "byeWeek": 5
+   },
+   {
+    "id": 2,
+    "abbrev": "BBB",
+    "byeWeek": 4
+   },
+   {
+    "id": 3,
+    "abbrev": "CCC",
+    "byeWeek": 6
+   },
+   {
+    "id": 4,
+    "abbrev": "DDD",
+    "byeWeek": 7
+   },
+   {
+    "id": 5,
+    "abbrev": "EEE",
+    "byeWeek": 9
+   },
+   {
+    "id": 6,
+    "abbrev": "FFF",
+    "byeWeek": 10
+   }
+  ]
+ }
+}

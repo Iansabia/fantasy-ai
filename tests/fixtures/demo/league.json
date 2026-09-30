@@ -1,0 +1,1262 @@
+{
+ "id": 99,
+ "seasonId": 2026,
+ "scoringPeriodId": 4,
+ "status": {
+  "currentMatchupPeriod": 4,
+  "latestScoringPeriod": 4
+ },
+ "settings": {
+  "name": "Demo League",
+  "rosterSettings": {
+   "lineupSlotCounts": {
+    "0": 1,
+    "2": 2,
+    "4": 2,
+    "6": 1,
+    "23": 1,
+    "16": 1,
+    "17": 1,
+    "20": 7,
+    "21": 1
+   }
+  }
+ },
+ "teams": [
+  {
+   "id": 1,
+   "name": "My Team",
+   "roster": {
+    "entries": [
+     {
+      "playerId": 101,
+      "lineupSlotId": 0,
+      "injuryStatus": "ACTIVE",
+      "playerPoolEntry": {
+       "id": 101,
+       "onTeamId": 1,
+       "lineupLocked": false,
+       "player": {
+        "id": 101,
+        "fullName": "Quinn Arm",
+        "defaultPositionId": 1,
+        "eligibleSlots": [
+         0,
+         7,
+         20,
+         21
+        ],
+        "proTeamId": 1,
+        "injuryStatus": "ACTIVE",
+        "injured": false,
+        "ownership": {
+         "percentOwned": 50.0
+        },
+        "stats": [
+         {
+          "seasonId": 2026,
+          "statSourceId": 1,
+          "statSplitTypeId": 1,
+          "scoringPeriodId": 4,
+          "appliedTotal": 20.0
+         },
+         {
+          "seasonId": 2026,
+          "statSourceId": 1,
+          "statSplitTypeId": 0,
+          "scoringPeriodId": 0,
+          "appliedTotal": 320.0
+         }
+        ]
+       }
+      }
+     },
+     {
+      "playerId": 102,
+      "lineupSlotId": 20,
+      "injuryStatus": "ACTIVE",
+      "playerPoolEntry": {
+       "id": 102,
+       "onTeamId": 1,
+       "lineupLocked": false,
+       "player": {
+        "id": 102,
+        "fullName": "Backup Bo",
+        "defaultPositionId": 1,
+        "eligibleSlots": [
+         0,
+         7,
+         20,
+         21
+        ],
+        "proTeamId": 1,
+        "injuryStatus": "ACTIVE",
+        "injured": false,
+        "ownership": {
+         "percentOwned": 50.0
+        },
+        "stats": [
+         {
+          "seasonId": 2026,
+          "statSourceId": 1,
+          "statSplitTypeId": 1,
+          "scoringPeriodId": 4,
+          "appliedTotal": 15.0
+         },
+         {
+          "seasonId": 2026,
+          "statSourceId": 1,
+          "statSplitTypeId": 0,
+          "scoringPeriodId": 0,
+          "appliedTotal": 240.0
+         }
+        ]
+       }
+      }
+     },
+     {
+      "playerId": 201,
+      "lineupSlotId": 2,
+      "injuryStatus": "ACTIVE",
+      "playerPoolEntry": {
+       "id": 201,
+       "onTeamId": 1,
+       "lineupLocked": true,
+       "player": {
+        "id": 201,
+        "fullName": "Thursday Tank",
+        "defaultPositionId": 2,
+        "eligibleSlots": [
+         2,
+         3,
+         23,
+         7,
+         20,
+         21
+        ],
+        "proTeamId": 3,
+        "injuryStatus": "ACTIVE",
+        "injured": false,
+        "ownership": {
+         "percentOwned": 50.0
+        },
+        "stats": [
+         {
+          "seasonId": 2026,
+          "statSourceId": 1,
+          "statSplitTypeId": 1,
+          "scoringPeriodId": 4,
+          "appliedTotal": 14.0
+         },
+         {
+          "seasonId": 2026,
+          "statSourceId": 1,
+          "statSplitTypeId": 0,
+          "scoringPeriodId": 0,
+          "appliedTotal": 224.0
+         }
+        ]
+       }
+      }
+     },
+     {
+      "playerId": 202,
+      "lineupSlotId": 2,
+      "injuryStatus": "OUT",
+      "playerPoolEntry": {
+       "id": 202,
+       "onTeamId": 1,
+       "lineupLocked": false,
+       "player": {
+        "id": 202,
+        "fullName": "Hurt Hal",
+        "defaultPositionId": 2,
+        "eligibleSlots": [
+         2,
+         3,
+         23,
+         7,
+         20,
+         21
+        ],
+        "proTeamId": 1,
+        "injuryStatus": "OUT",
+        "injured": true,
+        "ownership": {
+         "percentOwned": 50.0
+        },
+        "stats": [
+         {
+          "seasonId": 2026,
+          "statSourceId": 1,
+          "statSplitTypeId": 1,
+          "scoringPeriodId": 4,
+          "appliedTotal": 10.0
+         },
+         {
+          "seasonId": 2026,
+          "statSourceId": 1,
+          "statSplitTypeId": 0,
+          "scoringPeriodId": 0,
+          "appliedTotal": 160.0
+         }
+        ]
+       }
+      }
+     },
+     {
+      "playerId": 203,
+      "lineupSlotId": 20,
+      "injuryStatus": "ACTIVE",
+      "playerPoolEntry": {
+       "id": 203,
+       "onTeamId": 1,
+       "lineupLocked": false,
+       "player": {
+        "id": 203,
+        "fullName": "Ready Rex",
+        "defaultPositionId": 2,
+        "eligibleSlots": [
+         2,
+         3,
+         23,
+         7,
+         20,
+         21
+        ],
+        "proTeamId": 4,
+        "injuryStatus": "ACTIVE",
+        "injured": false,
+        "ownership": {
+         "percentOwned": 50.0
+        },
+        "stats": [
+         {
+          "seasonId": 2026,
+          "statSourceId": 1,
+          "statSplitTypeId": 1,
+          "scoringPeriodId": 4,
+          "appliedTotal": 12.0
+         },
+         {
+          "seasonId": 2026,
+          "statSourceId": 1,
+          "statSplitTypeId": 0,
+          "scoringPeriodId": 0,
+          "appliedTotal": 192.0
+         }
+        ]
+       }
+      }
+     },
+     {
+      "playerId": 204,
+      "lineupSlotId": 20,
+      "injuryStatus": "ACTIVE",
+      "playerPoolEntry": {
+       "id": 204,
+       "onTeamId": 1,
+       "lineupLocked": false,
+       "player": {
+        "id": 204,
+        "fullName": "Depth Dan",
+        "defaultPositionId": 2,
+        "eligibleSlots": [
+         2,
+         3,
+         23,
+         7,
+         20,
+         21
+        ],
+        "proTeamId": 5,
+        "injuryStatus": "ACTIVE",
+        "injured": false,
+        "ownership": {
+         "percentOwned": 50.0
+        },
+        "stats": [
+         {
+          "seasonId": 2026,
+          "statSourceId": 1,
+          "statSplitTypeId": 1,
+          "scoringPeriodId": 4,
+          "appliedTotal": 9.0
+         },
+         {
+          "seasonId": 2026,
+          "statSourceId": 1,
+          "statSplitTypeId": 0,
+          "scoringPeriodId": 0,
+          "appliedTotal": 144.0
+         }
+        ]
+       }
+      }
+     },
+     {
+      "playerId": 205,
+      "lineupSlotId": 21,
+      "injuryStatus": "INJURY_RESERVE",
+      "playerPoolEntry": {
+       "id": 205,
+       "onTeamId": 1,
+       "lineupLocked": false,
+       "player": {
+        "id": 205,
+        "fullName": "Season Sid",
+        "defaultPositionId": 2,
+        "eligibleSlots": [
+         2,
+         3,
+         23,
+         7,
+         20,
+         21
+        ],
+        "proTeamId": 1,
+        "injuryStatus": "INJURY_RESERVE",
+        "injured": true,
+        "ownership": {
+         "percentOwned": 50.0
+        },
+        "stats": [
+         {
+          "seasonId": 2026,
+          "statSourceId": 1,
+          "statSplitTypeId": 1,
+          "scoringPeriodId": 4,
+          "appliedTotal": 0.0
+         },
+         {
+          "seasonId": 2026,
+          "statSourceId": 1,
+          "statSplitTypeId": 0,
+          "scoringPeriodId": 0,
+          "appliedTotal": 150
+         }
+        ]
+       }
+      }
+     },
+     {
+      "playerId": 301,
+      "lineupSlotId": 4,
+      "injuryStatus": "ACTIVE",
+      "playerPoolEntry": {
+       "id": 301,
+       "onTeamId": 1,
+       "lineupLocked": false,
+       "player": {
+        "id": 301,
+        "fullName": "Wide Will",
+        "defaultPositionId": 3,
+        "eligibleSlots": [
+         3,
+         4,
+         5,
+         23,
+         7,
+         20,
+         21
+        ],
+        "proTeamId": 1,
+        "injuryStatus": "ACTIVE",
+        "injured": false,
+        "ownership": {
+         "percentOwned": 50.0
+        },
+        "stats": [
+         {
+          "seasonId": 2026,
+          "statSourceId": 1,
+          "statSplitTypeId": 1,
+          "scoringPeriodId": 4,
+          "appliedTotal": 16.0
+         },
+         {
+          "seasonId": 2026,
+          "statSourceId": 1,
+          "statSplitTypeId": 0,
+          "scoringPeriodId": 0,
+          "appliedTotal": 256.0
+         }
+        ]
+       }
+      }
+     },
+     {
+      "playerId": 302,
+      "lineupSlotId": 4,
+      "injuryStatus": "ACTIVE",
+      "playerPoolEntry": {
+       "id": 302,
+       "onTeamId": 1,
+       "lineupLocked": false,
+       "player": {
+        "id": 302,
+        "fullName": "Bye Bill",
+        "defaultPositionId": 3,
+        "eligibleSlots": [
+         3,
+         4,
+         5,
+         23,
+         7,
+         20,
+         21
+        ],
+        "proTeamId": 2,
+        "injuryStatus": "ACTIVE",
+        "injured": false,
+        "ownership": {
+         "percentOwned": 50.0
+        },
+        "stats": [
+         {
+          "seasonId": 2026,
+          "statSourceId": 1,
+          "statSplitTypeId": 1,
+          "scoringPeriodId": 4,
+          "appliedTotal": 15.0
+         },
+         {
+          "seasonId": 2026,
+          "statSourceId": 1,
+          "statSplitTypeId": 0,
+          "scoringPeriodId": 0,
+          "appliedTotal": 240.0
+         }
+        ]
+       }
+      }
+     },
+     {
+      "playerId": 303,
+      "lineupSlotId": 20,
+      "injuryStatus": "ACTIVE",
+      "playerPoolEntry": {
+       "id": 303,
+       "onTeamId": 1,
+       "lineupLocked": false,
+       "player": {
+        "id": 303,
+        "fullName": "Bench Ben",
+        "defaultPositionId": 3,
+        "eligibleSlots": [
+         3,
+         4,
+         5,
+         23,
+         7,
+         20,
+         21
+        ],
+        "proTeamId": 3,
+        "injuryStatus": "ACTIVE",
+        "injured": false,
+        "ownership": {
+         "percentOwned": 50.0
+        },
+        "stats": [
+         {
+          "seasonId": 2026,
+          "statSourceId": 1,
+          "statSplitTypeId": 1,
+          "scoringPeriodId": 4,
+          "appliedTotal": 13.0
+         },
+         {
+          "seasonId": 2026,
+          "statSourceId": 1,
+          "statSplitTypeId": 0,
+          "scoringPeriodId": 0,
+          "appliedTotal": 208.0
+         }
+        ]
+       }
+      }
+     },
+     {
+      "playerId": 304,
+      "lineupSlotId": 23,
+      "injuryStatus": "ACTIVE",
+      "playerPoolEntry": {
+       "id": 304,
+       "onTeamId": 1,
+       "lineupLocked": false,
+       "player": {
+        "id": 304,
+        "fullName": "Flex Fred",
+        "defaultPositionId": 3,
+        "eligibleSlots": [
+         3,
+         4,
+         5,
+         23,
+         7,
+         20,
+         21
+        ],
+        "proTeamId": 4,
+        "injuryStatus": "ACTIVE",
+        "injured": false,
+        "ownership": {
+         "percentOwned": 50.0
+        },
+        "stats": [
+         {
+          "seasonId": 2026,
+          "statSourceId": 1,
+          "statSplitTypeId": 1,
+          "scoringPeriodId": 4,
+          "appliedTotal": 8.0
+         },
+         {
+          "seasonId": 2026,
+          "statSourceId": 1,
+          "statSplitTypeId": 0,
+          "scoringPeriodId": 0,
+          "appliedTotal": 128.0
+         }
+        ]
+       }
+      }
+     },
+     {
+      "playerId": 305,
+      "lineupSlotId": 20,
+      "injuryStatus": "ACTIVE",
+      "playerPoolEntry": {
+       "id": 305,
+       "onTeamId": 1,
+       "lineupLocked": false,
+       "player": {
+        "id": 305,
+        "fullName": "Slot Sam",
+        "defaultPositionId": 3,
+        "eligibleSlots": [
+         3,
+         4,
+         5,
+         23,
+         7,
+         20,
+         21
+        ],
+        "proTeamId": 5,
+        "injuryStatus": "ACTIVE",
+        "injured": false,
+        "ownership": {
+         "percentOwned": 50.0
+        },
+        "stats": [
+         {
+          "seasonId": 2026,
+          "statSourceId": 1,
+          "statSplitTypeId": 1,
+          "scoringPeriodId": 4,
+          "appliedTotal": 10.0
+         },
+         {
+          "seasonId": 2026,
+          "statSourceId": 1,
+          "statSplitTypeId": 0,
+          "scoringPeriodId": 0,
+          "appliedTotal": 160.0
+         }
+        ]
+       }
+      }
+     },
+     {
+      "playerId": 401,
+      "lineupSlotId": 6,
+      "injuryStatus": "ACTIVE",
+      "playerPoolEntry": {
+       "id": 401,
+       "onTeamId": 1,
+       "lineupLocked": false,
+       "player": {
+        "id": 401,
+        "fullName": "Tight Ted",
+        "defaultPositionId": 4,
+        "eligibleSlots": [
+         5,
+         6,
+         23,
+         7,
+         20,
+         21
+        ],
+        "proTeamId": 1,
+        "injuryStatus": "ACTIVE",
+        "injured": false,
+        "ownership": {
+         "percentOwned": 50.0
+        },
+        "stats": [
+         {
+          "seasonId": 2026,
+          "statSourceId": 1,
+          "statSplitTypeId": 1,
+          "scoringPeriodId": 4,
+          "appliedTotal": 9.0
+         },
+         {
+          "seasonId": 2026,
+          "statSourceId": 1,
+          "statSplitTypeId": 0,
+          "scoringPeriodId": 0,
+          "appliedTotal": 144.0
+         }
+        ]
+       }
+      }
+     },
+     {
+      "playerId": 402,
+      "lineupSlotId": 20,
+      "injuryStatus": "ACTIVE",
+      "playerPoolEntry": {
+       "id": 402,
+       "onTeamId": 1,
+       "lineupLocked": false,
+       "player": {
+        "id": 402,
+        "fullName": "Tiny Tim",
+        "defaultPositionId": 4,
+        "eligibleSlots": [
+         5,
+         6,
+         23,
+         7,
+         20,
+         21
+        ],
+        "proTeamId": 6,
+        "injuryStatus": "ACTIVE",
+        "injured": false,
+        "ownership": {
+         "percentOwned": 50.0
+        },
+        "stats": [
+         {
+          "seasonId": 2026,
+          "statSourceId": 1,
+          "statSplitTypeId": 1,
+          "scoringPeriodId": 4,
+          "appliedTotal": 4.0
+         },
+         {
+          "seasonId": 2026,
+          "statSourceId": 1,
+          "statSplitTypeId": 0,
+          "scoringPeriodId": 0,
+          "appliedTotal": 40
+         }
+        ]
+       }
+      }
+     },
+     {
+      "playerId": 501,
+      "lineupSlotId": 16,
+      "injuryStatus": "ACTIVE",
+      "playerPoolEntry": {
+       "id": 501,
+       "onTeamId": 1,
+       "lineupLocked": false,
+       "player": {
+        "id": 501,
+        "fullName": "Iron Wall",
+        "defaultPositionId": 16,
+        "eligibleSlots": [
+         16,
+         20,
+         21
+        ],
+        "proTeamId": 6,
+        "injuryStatus": "ACTIVE",
+        "injured": false,
+        "ownership": {
+         "percentOwned": 50.0
+        },
+        "stats": [
+         {
+          "seasonId": 2026,
+          "statSourceId": 1,
+          "statSplitTypeId": 1,
+          "scoringPeriodId": 4,
+          "appliedTotal": 7.0
+         },
+         {
+          "seasonId": 2026,
+          "statSourceId": 1,
+          "statSplitTypeId": 0,
+          "scoringPeriodId": 0,
+          "appliedTotal": 112.0
+         }
+        ]
+       }
+      }
+     },
+     {
+      "playerId": 601,
+      "lineupSlotId": 17,
+      "injuryStatus": "ACTIVE",
+      "playerPoolEntry": {
+       "id": 601,
+       "onTeamId": 1,
+       "lineupLocked": false,
+       "player": {
+        "id": 601,
+        "fullName": "Boot Kicks",
+        "defaultPositionId": 5,
+        "eligibleSlots": [
+         17,
+         20,
+         21
+        ],
+        "proTeamId": 3,
+        "injuryStatus": "ACTIVE",
+        "injured": false,
+        "ownership": {
+         "percentOwned": 50.0
+        },
+        "stats": [
+         {
+          "seasonId": 2026,
+          "statSourceId": 1,
+          "statSplitTypeId": 1,
+          "scoringPeriodId": 4,
+          "appliedTotal": 8.0
+         },
+         {
+          "seasonId": 2026,
+          "statSourceId": 1,
+          "statSplitTypeId": 0,
+          "scoringPeriodId": 0,
+          "appliedTotal": 128.0
+         }
+        ]
+       }
+      }
+     }
+    ]
+   }
+  },
+  {
+   "id": 2,
+   "name": "Rival Squad",
+   "roster": {
+    "entries": [
+     {
+      "playerId": 111,
+      "lineupSlotId": 0,
+      "injuryStatus": "ACTIVE",
+      "playerPoolEntry": {
+       "id": 111,
+       "onTeamId": 2,
+       "lineupLocked": false,
+       "player": {
+        "id": 111,
+        "fullName": "Rival QB",
+        "defaultPositionId": 1,
+        "eligibleSlots": [
+         0,
+         7,
+         20,
+         21
+        ],
+        "proTeamId": 4,
+        "injuryStatus": "ACTIVE",
+        "injured": false,
+        "ownership": {
+         "percentOwned": 50.0
+        },
+        "stats": [
+         {
+          "seasonId": 2026,
+          "statSourceId": 1,
+          "statSplitTypeId": 1,
+          "scoringPeriodId": 4,
+          "appliedTotal": 18.0
+         },
+         {
+          "seasonId": 2026,
+          "statSourceId": 1,
+          "statSplitTypeId": 0,
+          "scoringPeriodId": 0,
+          "appliedTotal": 288.0
+         }
+        ]
+       }
+      }
+     },
+     {
+      "playerId": 211,
+      "lineupSlotId": 2,
+      "injuryStatus": "ACTIVE",
+      "playerPoolEntry": {
+       "id": 211,
+       "onTeamId": 2,
+       "lineupLocked": false,
+       "player": {
+        "id": 211,
+        "fullName": "Rival RB1",
+        "defaultPositionId": 2,
+        "eligibleSlots": [
+         2,
+         3,
+         23,
+         7,
+         20,
+         21
+        ],
+        "proTeamId": 5,
+        "injuryStatus": "ACTIVE",
+        "injured": false,
+        "ownership": {
+         "percentOwned": 50.0
+        },
+        "stats": [
+         {
+          "seasonId": 2026,
+          "statSourceId": 1,
+          "statSplitTypeId": 1,
+          "scoringPeriodId": 4,
+          "appliedTotal": 17.0
+         },
+         {
+          "seasonId": 2026,
+          "statSourceId": 1,
+          "statSplitTypeId": 0,
+          "scoringPeriodId": 0,
+          "appliedTotal": 272.0
+         }
+        ]
+       }
+      }
+     },
+     {
+      "playerId": 212,
+      "lineupSlotId": 2,
+      "injuryStatus": "ACTIVE",
+      "playerPoolEntry": {
+       "id": 212,
+       "onTeamId": 2,
+       "lineupLocked": false,
+       "player": {
+        "id": 212,
+        "fullName": "Rival RB2",
+        "defaultPositionId": 2,
+        "eligibleSlots": [
+         2,
+         3,
+         23,
+         7,
+         20,
+         21
+        ],
+        "proTeamId": 6,
+        "injuryStatus": "ACTIVE",
+        "injured": false,
+        "ownership": {
+         "percentOwned": 50.0
+        },
+        "stats": [
+         {
+          "seasonId": 2026,
+          "statSourceId": 1,
+          "statSplitTypeId": 1,
+          "scoringPeriodId": 4,
+          "appliedTotal": 11.0
+         },
+         {
+          "seasonId": 2026,
+          "statSourceId": 1,
+          "statSplitTypeId": 0,
+          "scoringPeriodId": 0,
+          "appliedTotal": 176.0
+         }
+        ]
+       }
+      }
+     },
+     {
+      "playerId": 213,
+      "lineupSlotId": 20,
+      "injuryStatus": "ACTIVE",
+      "playerPoolEntry": {
+       "id": 213,
+       "onTeamId": 2,
+       "lineupLocked": false,
+       "player": {
+        "id": 213,
+        "fullName": "Rival RB3",
+        "defaultPositionId": 2,
+        "eligibleSlots": [
+         2,
+         3,
+         23,
+         7,
+         20,
+         21
+        ],
+        "proTeamId": 1,
+        "injuryStatus": "ACTIVE",
+        "injured": false,
+        "ownership": {
+         "percentOwned": 50.0
+        },
+        "stats": [
+         {
+          "seasonId": 2026,
+          "statSourceId": 1,
+          "statSplitTypeId": 1,
+          "scoringPeriodId": 4,
+          "appliedTotal": 7.0
+         },
+         {
+          "seasonId": 2026,
+          "statSourceId": 1,
+          "statSplitTypeId": 0,
+          "scoringPeriodId": 0,
+          "appliedTotal": 112.0
+         }
+        ]
+       }
+      }
+     },
+     {
+      "playerId": 311,
+      "lineupSlotId": 4,
+      "injuryStatus": "ACTIVE",
+      "playerPoolEntry": {
+       "id": 311,
+       "onTeamId": 2,
+       "lineupLocked": false,
+       "player": {
+        "id": 311,
+        "fullName": "Rival WR1",
+        "defaultPositionId": 3,
+        "eligibleSlots": [
+         3,
+         4,
+         5,
+         23,
+         7,
+         20,
+         21
+        ],
+        "proTeamId": 6,
+        "injuryStatus": "ACTIVE",
+        "injured": false,
+        "ownership": {
+         "percentOwned": 50.0
+        },
+        "stats": [
+         {
+          "seasonId": 2026,
+          "statSourceId": 1,
+          "statSplitTypeId": 1,
+          "scoringPeriodId": 4,
+          "appliedTotal": 18.0
+         },
+         {
+          "seasonId": 2026,
+          "statSourceId": 1,
+          "statSplitTypeId": 0,
+          "scoringPeriodId": 0,
+          "appliedTotal": 288.0
+         }
+        ]
+       }
+      }
+     },
+     {
+      "playerId": 312,
+      "lineupSlotId": 4,
+      "injuryStatus": "ACTIVE",
+      "playerPoolEntry": {
+       "id": 312,
+       "onTeamId": 2,
+       "lineupLocked": false,
+       "player": {
+        "id": 312,
+        "fullName": "Rival WR2",
+        "defaultPositionId": 3,
+        "eligibleSlots": [
+         3,
+         4,
+         5,
+         23,
+         7,
+         20,
+         21
+        ],
+        "proTeamId": 1,
+        "injuryStatus": "ACTIVE",
+        "injured": false,
+        "ownership": {
+         "percentOwned": 50.0
+        },
+        "stats": [
+         {
+          "seasonId": 2026,
+          "statSourceId": 1,
+          "statSplitTypeId": 1,
+          "scoringPeriodId": 4,
+          "appliedTotal": 12.0
+         },
+         {
+          "seasonId": 2026,
+          "statSourceId": 1,
+          "statSplitTypeId": 0,
+          "scoringPeriodId": 0,
+          "appliedTotal": 192.0
+         }
+        ]
+       }
+      }
+     },
+     {
+      "playerId": 313,
+      "lineupSlotId": 23,
+      "injuryStatus": "ACTIVE",
+      "playerPoolEntry": {
+       "id": 313,
+       "onTeamId": 2,
+       "lineupLocked": false,
+       "player": {
+        "id": 313,
+        "fullName": "Rival WR3",
+        "defaultPositionId": 3,
+        "eligibleSlots": [
+         3,
+         4,
+         5,
+         23,
+         7,
+         20,
+         21
+        ],
+        "proTeamId": 3,
+        "injuryStatus": "ACTIVE",
+        "injured": false,
+        "ownership": {
+         "percentOwned": 50.0
+        },
+        "stats": [
+         {
+          "seasonId": 2026,
+          "statSourceId": 1,
+          "statSplitTypeId": 1,
+          "scoringPeriodId": 4,
+          "appliedTotal": 11.5
+         },
+         {
+          "seasonId": 2026,
+          "statSourceId": 1,
+          "statSplitTypeId": 0,
+          "scoringPeriodId": 0,
+          "appliedTotal": 184.0
+         }
+        ]
+       }
+      }
+     },
+     {
+      "playerId": 314,
+      "lineupSlotId": 20,
+      "injuryStatus": "ACTIVE",
+      "playerPoolEntry": {
+       "id": 314,
+       "onTeamId": 2,
+       "lineupLocked": false,
+       "player": {
+        "id": 314,
+        "fullName": "Rival WR4",
+        "defaultPositionId": 3,
+        "eligibleSlots": [
+         3,
+         4,
+         5,
+         23,
+         7,
+         20,
+         21
+        ],
+        "proTeamId": 4,
+        "injuryStatus": "ACTIVE",
+        "injured": false,
+        "ownership": {
+         "percentOwned": 50.0
+        },
+        "stats": [
+         {
+          "seasonId": 2026,
+          "statSourceId": 1,
+          "statSplitTypeId": 1,
+          "scoringPeriodId": 4,
+          "appliedTotal": 9.0
+         },
+         {
+          "seasonId": 2026,
+          "statSourceId": 1,
+          "statSplitTypeId": 0,
+          "scoringPeriodId": 0,
+          "appliedTotal": 144.0
+         }
+        ]
+       }
+      }
+     },
+     {
+      "playerId": 411,
+      "lineupSlotId": 6,
+      "injuryStatus": "ACTIVE",
+      "playerPoolEntry": {
+       "id": 411,
+       "onTeamId": 2,
+       "lineupLocked": false,
+       "player": {
+        "id": 411,
+        "fullName": "Rival TE",
+        "defaultPositionId": 4,
+        "eligibleSlots": [
+         5,
+         6,
+         23,
+         7,
+         20,
+         21
+        ],
+        "proTeamId": 5,
+        "injuryStatus": "ACTIVE",
+        "injured": false,
+        "ownership": {
+         "percentOwned": 50.0
+        },
+        "stats": [
+         {
+          "seasonId": 2026,
+          "statSourceId": 1,
+          "statSplitTypeId": 1,
+          "scoringPeriodId": 4,
+          "appliedTotal": 10.0
+         },
+         {
+          "seasonId": 2026,
+          "statSourceId": 1,
+          "statSplitTypeId": 0,
+          "scoringPeriodId": 0,
+          "appliedTotal": 160.0
+         }
+        ]
+       }
+      }
+     },
+     {
+      "playerId": 511,
+      "lineupSlotId": 16,
+      "injuryStatus": "ACTIVE",
+      "playerPoolEntry": {
+       "id": 511,
+       "onTeamId": 2,
+       "lineupLocked": false,
+       "player": {
+        "id": 511,
+        "fullName": "Rival D",
+        "defaultPositionId": 16,
+        "eligibleSlots": [
+         16,
+         20,
+         21
+        ],
+        "proTeamId": 1,
+        "injuryStatus": "ACTIVE",
+        "injured": false,
+        "ownership": {
+         "percentOwned": 50.0
+        },
+        "stats": [
+         {
+          "seasonId": 2026,
+          "statSourceId": 1,
+          "statSplitTypeId": 1,
+          "scoringPeriodId": 4,
+          "appliedTotal": 6.0
+         },
+         {
+          "seasonId": 2026,
+          "statSourceId": 1,
+          "statSplitTypeId": 0,
+          "scoringPeriodId": 0,
+          "appliedTotal": 96.0
+         }
+        ]
+       }
+      }
+     },
+     {
+      "playerId": 611,
+      "lineupSlotId": 17,
+      "injuryStatus": "ACTIVE",
+      "playerPoolEntry": {
+       "id": 611,
+       "onTeamId": 2,
+       "lineupLocked": false,
+       "player": {
+        "id": 611,
+        "fullName": "Rival K",
+        "defaultPositionId": 5,
+        "eligibleSlots": [
+         17,
+         20,
+         21
+        ],
+        "proTeamId": 4,
+        "injuryStatus": "ACTIVE",
+        "injured": false,
+        "ownership": {
+         "percentOwned": 50.0
+        },
+        "stats": [
+         {
+          "seasonId": 2026,
+          "statSourceId": 1,
+          "statSplitTypeId": 1,
+          "scoringPeriodId": 4,
+          "appliedTotal": 7.5
+         },
+         {
+          "seasonId": 2026,
+          "statSourceId": 1,
+          "statSplitTypeId": 0,
+          "scoringPeriodId": 0,
+          "appliedTotal": 120.0
+         }
+        ]
+       }
+      }
+     }
+    ]
+   }
+  }
+ ],
+ "schedule": [
+  {
+   "matchupPeriodId": 4,
+   "home": {
+    "teamId": 1,
+    "totalPoints": 31.4
+   },
+   "away": {
+    "teamId": 2,
+    "totalPoints": 18.2
+   }
+  }
+ ]
+}

@@ -1,0 +1,162 @@
+{
+ "players": [
+  {
+   "id": 901,
+   "status": "WAIVERS",
+   "onTeamId": 0,
+   "player": {
+    "id": 901,
+    "fullName": "Waiver Wonder",
+    "defaultPositionId": 4,
+    "eligibleSlots": [
+     5,
+     6,
+     23,
+     7,
+     20,
+     21
+    ],
+    "proTeamId": 4,
+    "injuryStatus": "ACTIVE",
+    "injured": false,
+    "ownership": {
+     "percentOwned": 30.0
+    },
+    "stats": [
+     {
+      "seasonId": 2026,
+      "statSourceId": 1,
+      "statSplitTypeId": 1,
+      "scoringPeriodId": 4,
+      "appliedTotal": 8.0
+     },
+     {
+      "seasonId": 2026,
+      "statSourceId": 1,
+      "statSplitTypeId": 0,
+      "scoringPeriodId": 0,
+      "appliedTotal": 120
+     }
+    ]
+   }
+  },
+  {
+   "id": 902,
+   "status": "FREEAGENT",
+   "onTeamId": 0,
+   "player": {
+    "id": 902,
+    "fullName": "Street Runner",
+    "defaultPositionId": 2,
+    "eligibleSlots": [
+     2,
+     3,
+     23,
+     7,
+     20,
+     21
+    ],
+    "proTeamId": 6,
+    "injuryStatus": "ACTIVE",
+    "injured": false,
+    "ownership": {
+     "percentOwned": 12.0
+    },
+    "stats": [
+     {
+      "seasonId": 2026,
+      "statSourceId": 1,
+      "statSplitTypeId": 1,
+      "scoringPeriodId": 4,
+      "appliedTotal": 6.0
+     },
+     {
+      "seasonId": 2026,
+      "statSourceId": 1,
+      "statSplitTypeId": 0,
+      "scoringPeriodId": 0,
+      "appliedTotal": 70
+     }
+    ]
+   }
+  },
+  {
+   "id": 903,
+   "status": "FREEAGENT",
+   "onTeamId": 0,
+   "player": {
+    "id": 903,
+    "fullName": "Meh Receiver",
+    "defaultPositionId": 3,
+    "eligibleSlots": [
+     3,
+     4,
+     5,
+     23,
+     7,
+     20,
+     21
+    ],
+    "proTeamId": 5,
+    "injuryStatus": "ACTIVE",
+    "injured": false,
+    "ownership": {
+     "percentOwned": 8.0
+    },
+    "stats": [
+     {
+      "seasonId": 2026,
+      "statSourceId": 1,
+      "statSplitTypeId": 1,
+      "scoringPeriodId": 4,
+      "appliedTotal": 7.0
+     },
+     {
+      "seasonId": 2026,
+      "statSourceId": 1,
+      "statSplitTypeId": 0,
+      "scoringPeriodId": 0,
+      "appliedTotal": 150
+     }
+    ]
+   }
+  },
+  {
+   "id": 904,
+   "status": "FREEAGENT",
+   "onTeamId": 0,
+   "player": {
+    "id": 904,
+    "fullName": "Big Leg",
+    "defaultPositionId": 5,
+    "eligibleSlots": [
+     17,
+     20,
+     21
+    ],
+    "proTeamId": 1,
+    "injuryStatus": "ACTIVE",
+    "injured": false,
+    "ownership": {
+     "percentOwned": 40.0
+    },
+    "stats": [
+     {
+      "seasonId": 2026,
+      "statSourceId": 1,
+      "statSplitTypeId": 1,
+      "scoringPeriodId": 4,
+      "appliedTotal": 9.5
+     },
+     {
+      "seasonId": 2026,
+      "statSourceId": 1,
+      "statSplitTypeId": 0,
+      "scoringPeriodId": 0,
+      "appliedTotal": 150
+     }
+    ]
+   }
+  }
+ ]
+}
