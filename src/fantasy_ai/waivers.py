@@ -200,30 +200,45 @@ def droppable(state: LeagueState, prefs=None, cfg: dict | None = None, cache: di
     return [p for p in state.roster if st[p.player_id] is None or str(st[p.player_id]).startswith(soft)]
 
 
+SPECIAL = ("K", "D/ST")       # only one ever starts: never bench depth, only swapped for ours
+
+
 def _useful_depth(p: Player, roster: list[Player], state: LeagueState, cfg: dict) -> bool:
-    """Is p within useful depth at his position: dedicated starting slots + 1 backup
-    (+1 more at RB/WR/TE when there is a FLEX, +1 QB with superflex)? A 4th QB in a 1-QB
-    league has no depth value."""
+    """Is p depth that can actually enter the lineup?
+    RB / WR: starting slots + 1 backup (+1 more with FLEX).
+    QB / TE: starting slots (+1 QB with superflex); a backup only while one of those starters is
+    hurt or on bye within the horizon. A 2nd QB or TE otherwise never plays.
+    K / D/ST: starting slots only; a second one never plays."""
     slot_for = {"QB": 0, "RB": 2, "WR": 4, "TE": 6, "K": 17, "D/ST": 16}
-    need = state.slot_counts.get(slot_for.get(p.position, -1), 0) + 1
-    if p.position in ("RB", "WR", "TE") and state.slot_counts.get(23, 0):
-        need += 1
-    if p.position == "QB" and state.slot_counts.get(7, 0):
-        need += 1
+    slots = state.slot_counts.get(slot_for.get(p.position, -1), 0)
+    if p.position == "QB":
+        slots += state.slot_counts.get(7, 0)
     H = cfg["horizon"]
-    same = sorted([q for q in roster if q.position == p.position and not q.on_ir_slot],
-                  key=lambda q: ros(q, state, cfg) + sum(week_worth(q, state, k, cfg) for k in range(H)),
-                  reverse=True)                     # near-term worth counts too, not just season projection
+    value = lambda q: ros(q, state, cfg) + sum(week_worth(q, state, k, cfg) for k in range(H))
+    same = sorted([q for q in roster if q.position == p.position and not q.on_ir_slot], key=value, reverse=True)
     rank = next((i for i, q in enumerate(same) if q.player_id == p.player_id), len(same))
+    if p.position in ("RB", "WR"):
+        need = slots + 1 + (1 if state.slot_counts.get(23, 0) else 0)
+    elif p.position in ("QB", "TE"):
+        starters = [q for q in same if q.player_id != p.player_id][:slots]
+        wk = state.scoring_period
+        gap = len(starters) < slots or any(
+            not q.is_healthy() or q.ir_eligible() or (q.bye_week is not None and wk <= q.bye_week < wk + H)
+            for q in starters)
+        need = slots + (1 if gap else 0)
+    else:
+        need = slots
     return rank < need
 
 
 # ---------------------------------------------------------------- evaluate one add
 
 def evaluate_add(state: LeagueState, add: Player, prefs=None, cfg: dict | None = None,
-                 cache: dict | None = None) -> WaiverSuggestion | None:
+                 cache: dict | None = None, only_drop: Player | None = None) -> WaiverSuggestion | None:
     """Best drop for this add (or no drop if there is an open roster spot). Returns the best
-    option even if it is below the threshold (explain uses that); None if no legal drop."""
+    option even if it is below the threshold (explain uses that); None if no legal drop.
+    A K or D/ST add can only replace a K or D/ST of ours (never an extra bench spot).
+    only_drop forces the drop (audit: best add for one roster spot)."""
     cfg = merged(cfg)
     cache = {} if cache is None else cache
     week, H = state.scoring_period, cfg["horizon"]
@@ -234,6 +249,10 @@ def evaluate_add(state: LeagueState, add: Player, prefs=None, cfg: dict | None =
     options: list[Player | None] = list(droppable(state, prefs, cfg, cache))
     if len(active) < roster_limit:
         options.append(None)
+    if add.position in SPECIAL:
+        options = [d for d in options if d is not None and d.position == add.position]
+    if only_drop is not None:
+        options = [d for d in options if d is not None and d.player_id == only_drop.player_id]
     best = None
     considered: set[int] = set()
     rejected: dict[int, str] = {}
@@ -429,6 +448,21 @@ def streamers(state: LeagueState, prefs=None, cfg: dict | None = None) -> list[W
         out.append(WaiverSuggestion(fa, drop, fa.lineup_value(wk), drop.lineup_value(wk), edge,
                                     "WAIVER" if claim else "FREEAGENT", reason, why, edge, cfg["stream_margin"]))
     return out
+
+
+def best_add_for(state: LeagueState, drop: Player, prefs=None, cfg: dict | None = None,
+                 skill_only: bool = True) -> WaiverSuggestion | None:
+    """Best free agent to take this player's roster spot, even below the threshold (audit)."""
+    cfg = merged(cfg)
+    cache: dict = {}
+    best = None
+    for fa in state.free_agents:
+        if skill_only and fa.position in SPECIAL:
+            continue
+        sg = evaluate_add(state, fa, prefs, cfg, cache, only_drop=drop)
+        if sg is not None and (best is None or sg.gain > best.gain):
+            best = sg
+    return best
 
 
 def audit(state: LeagueState, prefs=None, cfg: dict | None = None) -> list[dict]:

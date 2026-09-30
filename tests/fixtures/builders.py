@@ -113,7 +113,8 @@ def demo_free_agents():
         fa_row(player(901, "Waiver Wonder", "TE", 8.0, season=120, pro=4, owned=30.0), "WAIVERS"),
         fa_row(player(902, "Street Runner", "RB", 6.0, season=70, pro=6, owned=12.0)),
         fa_row(player(903, "Meh Receiver", "WR", 7.0, season=150, pro=5, owned=8.0)),  # worse than Flex Fred
-        fa_row(player(904, "Big Leg", "K", 9.5, season=150, pro=1, owned=40.0)),
+        fa_row(player(904, "Big Leg", "K", 9.5, season=150, pro=1, owned=40.0)),   # bench K: never an add
+        fa_row(player(905, "Rising Rb", "RB", 13.0, season=210, pro=3, owned=25.0)),  # real upgrade at RB
     ]}
 
 

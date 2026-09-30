@@ -157,6 +157,46 @@
      }
     ]
    }
+  },
+  {
+   "id": 905,
+   "status": "FREEAGENT",
+   "onTeamId": 0,
+   "player": {
+    "id": 905,
+    "fullName": "Rising Rb",
+    "defaultPositionId": 2,
+    "eligibleSlots": [
+     2,
+     3,
+     23,
+     7,
+     20,
+     21
+    ],
+    "proTeamId": 3,
+    "injuryStatus": "ACTIVE",
+    "injured": false,
+    "ownership": {
+     "percentOwned": 25.0
+    },
+    "stats": [
+     {
+      "seasonId": 2026,
+      "statSourceId": 1,
+      "statSplitTypeId": 1,
+      "scoringPeriodId": 4,
+      "appliedTotal": 13.0
+     },
+     {
+      "seasonId": 2026,
+      "statSourceId": 1,
+      "statSplitTypeId": 0,
+      "scoringPeriodId": 0,
+      "appliedTotal": 210
+     }
+    ]
+   }
   }
  ]
 }

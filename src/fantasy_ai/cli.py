@@ -314,6 +314,19 @@ def cmd_waivers(cfg: AppConfig, args) -> int:
             print(f"  {r['name']:24} {r['pos']:4} {r['slot']:9} {'yes' if r['droppable'] else 'no':6} "
                   f"{r['ros']:6.1f} {r['next3']:5.1f} {r['owned']:5.0f}  {r['hype'][:24]:24} {r['reason'] or '-'}"
                   + (f" | {r['trend']}" if r['trend'] else ""))
+        from .waivers import best_add_for, merged
+        rows = [r for r in audit(state, pr, cfg.waivers) if r["droppable"]][:3]
+        if rows:
+            print("\n  Best skill-position add for each weakest droppable spot (even below the threshold):")
+        for r in rows:
+            d = state.find_player(r["name"])
+            sg = best_add_for(state, d, pr, cfg.waivers) if d else None
+            if sg is None:
+                print(f"    {r['name']:24} no legal add")
+            else:
+                print(f"    {r['name']:24} -> {sg.add.name} ({sg.add.position}, {sg.kind.lower()}): "
+                      f"{sg.gain:+.1f} pts over {merged(cfg.waivers)['horizon']} wks "
+                      f"(needs +{sg.threshold:.0f}); {'; '.join(sg.why[:2])}")
         print()
     for f in failures:
         print(f"WARNING: {f}")

@@ -130,3 +130,46 @@ def test_espn_percent_change_preferred_and_consensus_factor():
     score.apply(s, WeekContext(week=4))
     f = next(f for f in p.factors if f.name == "consensus")
     assert 1 < f.multiplier <= 1.03 and "95%" in f.reason
+
+
+# ---- K / D/ST never take a bench spot; QB / TE depth only when it can play
+
+def test_loop_for_hunter_case_second_kicker_never_suggested():
+    s = friendly()
+    s.free_agents.append(__import__("fantasy_ai.espn_read", fromlist=["parse_player"]).parse_player(
+        b.fa_row(b.player(91, "Tyler Loop", "K", 11.5, season=190)), 2026, 4, {}))
+    s.free_agents.append(__import__("fantasy_ai.espn_read", fromlist=["parse_player"]).parse_player(
+        b.fa_row(b.player(92, "Spare D", "D/ST", 10.0, season=160)), 2026, 4, {}))
+    sugg, fails = waivers.rank_with_checks(s, cfg={"min_gain_free_agent": 0, "min_gain_waiver": 0})
+    assert fails == []
+    for sg in sugg:
+        if sg.add.position in ("K", "D/ST"):
+            assert sg.drop is not None and sg.drop.position == sg.add.position
+    loop = waivers.evaluate_add(s, s.find_player("Tyler Loop"))
+    assert loop is None or loop.drop.position == "K"          # only a swap for our K, never Hunter
+    assert waivers.best_add_for(s, s.find_player("Travis Hunter")).add.position not in ("K", "D/ST")
+
+
+def test_bench_kicker_can_be_swapped_for_a_better_one():
+    s = friendly()
+    from fantasy_ai.espn_read import parse_player
+    bench_k = parse_player(b.entry(b.player(93, "Bench Kick", "K", 5.0, season=80), 20), 2026, 4, {})
+    bench_k.on_team_id = 1
+    s.my_team.roster.append(bench_k)
+    s.free_agents.append(parse_player(b.fa_row(b.player(91, "Tyler Loop", "K", 11.5, season=190)), 2026, 4, {}))
+    loop = waivers.evaluate_add(s, s.find_player("Tyler Loop"))
+    assert loop is not None and loop.drop.position == "K"
+
+
+def test_second_qb_or_te_is_not_useful_depth_unless_a_starter_is_out_or_on_bye():
+    s = friendly()
+    cfg = waivers.merged(None)
+    goff, goedert = s.find_player("Jared Goff"), s.find_player("Dallas Goedert")
+    assert waivers._useful_depth(goff, s.roster, s, cfg) or waivers._useful_depth(
+        s.find_player("Matthew Stafford"), s.roster, s, cfg)          # fixture: Dak's bye (week 5) is close
+    for p in s.roster:
+        p.bye_week = None
+    assert not waivers._useful_depth(goff, s.roster, s, cfg)          # Dak healthy, no bye soon
+    assert not waivers._useful_depth(goedert, s.roster, s, cfg)       # backup TE behind a healthy starter
+    s.find_player("Dak Prescott").injury_status = "OUT"
+    assert waivers._useful_depth(goff, s.roster, s, cfg) or waivers._useful_depth(s.find_player("Matthew Stafford"), s.roster, s, cfg)
