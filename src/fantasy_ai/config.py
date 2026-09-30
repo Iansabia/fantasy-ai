@@ -72,6 +72,7 @@ class AppConfig:
     pacing: dict = field(default_factory=dict)   # see pacing.py DEFAULTS
     waivers: dict = field(default_factory=dict)  # see waivers.py DEFAULTS
     hype: dict = field(default_factory=dict)     # label -> [ros mult, future mult], see hype.py MULTS
+    schedule: dict = field(default_factory=dict)  # {"sunday_inactive_check": false}
 
     def get(self, name: str) -> LeagueConfig:
         for lg in self.leagues:
@@ -115,7 +116,8 @@ def _parse(data: dict, path: Path | None) -> AppConfig:
     )
     return AppConfig(leagues=leagues, settings=settings, source=path, notify=data.get("notify") or {},
                      factors=data.get("factors") or {}, pacing=data.get("pacing") or {},
-                     waivers=data.get("waivers") or {}, hype=data.get("hype") or {})
+                     waivers=data.get("waivers") or {}, hype=data.get("hype") or {},
+                     schedule=data.get("schedule") or {})
 
 
 def load_credentials(profile: str, env_file: str | Path | None = None) -> Credentials | None:

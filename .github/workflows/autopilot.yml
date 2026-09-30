@@ -8,24 +8,24 @@
 #          ANTHROPIC_API_KEY, STATE_KEY   (add ESPN_S2_IAN / SWID_IAN for Ian's own leagues)
 # Variable: LIVE=true to really set lineups / send approved moves.
 #
-# Cron is UTC. ET = UTC-4 until 2026-11-01, then UTC-5. Times below are ~1 hour before lock
-# under EDT and ~2 hours before under EST (GitHub cron can start 5-30 min late).
+# Cron is UTC. ET = UTC-4 (EDT) until 2026-11-01, then UTC-5 (EST). The Thursday/Saturday runs
+# at 18:00 UTC land at 2:00pm EDT, then 1:00pm EST after Nov 1 (still well before games).
+# GitHub cron can start 5-30 min late; the catchup job covers a missed Thursday run.
 name: autopilot
 
 on:
   schedule:
-    - cron: "15 23 * 9-12,1 4"   # Thu 7:15pm EDT, before TNF 8:15pm kickoff
-    - cron: "0 16 * 9-12,1 0"    # Sun 12:00pm EDT, before 1pm games
-    - cron: "0 19 * 9-12,1 0"    # Sun 3:00pm EDT, before 4:05/4:25 games
-    - cron: "15 23 * 9-12,1 0"   # Sun 7:15pm EDT, before SNF 8:20pm
-    - cron: "15 23 * 9-12,1 1"   # Mon 7:15pm EDT, before MNF 8:15pm
-    - cron: "0 14 * 9-12,1 2,3"  # Tue/Wed 10am EDT: waiver suggestions (approval queue)
-    - cron: "*/30 * * 9-12,1 *"  # every 30 min in season: read Telegram approvals
+    - cron: "0 18 * 9-12,1 4"      # Thursday 2pm EDT: full run (news, factors, Vegas, IR, waiver ideas)
+    - cron: "0 18 * 9-12,1 6"      # Saturday 2pm EDT: recheck (lineups + IR only)
+    - cron: "45 15 * 9-12,1 0"     # Sunday 11:45am EDT: inactive check, only if schedule.sunday_inactive_check
+    - cron: "30 */3 * 9-12,1 5,6,0"  # Fri-Sun every 3h: catch-up if Thursday's run was missed
+    - cron: "0 14 * 9-12,1 2,3"    # Tue/Wed 10am EDT: waiver suggestions (approval queue)
+    - cron: "*/30 * * 9-12,1 *"    # every 30 min in season: read Telegram approvals
   workflow_dispatch:
     inputs:
       mode:
-        description: "lineup | waivers | poll"
-        default: lineup
+        description: "full | recheck | inactives | catchup | waivers | poll"
+        default: full
 
 concurrency:
   group: fantasy-ai          # never two runs at once (no double sends, no state races)
@@ -66,8 +66,12 @@ jobs:
           case "${{ github.event.schedule }}" in
             "*/30 * * 9-12,1 *") echo "mode=poll" >> "$GITHUB_OUTPUT" ;;
             "0 14 * 9-12,1 2,3") echo "mode=waivers" >> "$GITHUB_OUTPUT" ;;
-            "") echo "mode=${{ github.event.inputs.mode || 'lineup' }}" >> "$GITHUB_OUTPUT" ;;
-            *) echo "mode=lineup" >> "$GITHUB_OUTPUT" ;;
+            "0 18 * 9-12,1 4") echo "mode=full" >> "$GITHUB_OUTPUT" ;;
+            "0 18 * 9-12,1 6") echo "mode=recheck" >> "$GITHUB_OUTPUT" ;;
+            "45 15 * 9-12,1 0") echo "mode=inactives" >> "$GITHUB_OUTPUT" ;;
+            "30 */3 * 9-12,1 5,6,0") echo "mode=catchup" >> "$GITHUB_OUTPUT" ;;
+            "") echo "mode=${{ github.event.inputs.mode || 'full' }}" >> "$GITHUB_OUTPUT" ;;
+            *) echo "mode=full" >> "$GITHUB_OUTPUT" ;;
           esac
 
       - name: Restore encrypted state
@@ -78,12 +82,12 @@ jobs:
           restore-keys: fai-state-
       - run: fai state unpack
 
-      - name: Lineups (automatic)
-        if: steps.mode.outputs.mode == 'lineup'
-        run: fai autopilot --jitter --notify ${{ vars.LIVE == 'true' && '--send' || '' }}
+      - name: Lineups (automatic; heartbeat text every run)
+        if: contains(fromJSON('["full","recheck","inactives","catchup"]'), steps.mode.outputs.mode)
+        run: fai autopilot --mode ${{ steps.mode.outputs.mode }} --jitter --notify ${{ vars.LIVE == 'true' && '--send' || '' }}
       - name: Waiver suggestions (approval queue only)
         if: steps.mode.outputs.mode == 'waivers'
-        run: fai autopilot --jitter --notify --waivers
+        run: fai autopilot --mode recheck --waivers --jitter --notify
       - name: Telegram approvals
         if: steps.mode.outputs.mode == 'poll'
         run: |

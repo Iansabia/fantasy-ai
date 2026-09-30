@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- NOT INSTALLED. Thursday 2:00pm ET: full run (news, factors, Vegas, IR, waiver ideas, texts).
+     Replace __REPO__ with the repo path, copy to ~/Library/LaunchAgents/, then
+     launchctl load ~/Library/LaunchAgents/com.fantasyai.thursday.plist
+     launchd uses the Mac's local clock (times assume Eastern). If the Mac is asleep at the
+     scheduled time, launchd runs the job once on wake. Remove --send to keep it a dry run. -->
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>com.fantasyai.thursday</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>__REPO__/.venv/bin/fai</string>
+    <string>autopilot</string>
+    <string>--mode</string>
+    <string>full</string>
+    <string>--jitter</string>
+    <string>--notify</string>
+    <string>--send</string>
+  </array>
+  <key>WorkingDirectory</key><string>__REPO__</string>
+  <key>StartCalendarInterval</key>
+  <dict><key>Weekday</key><integer>4</integer><key>Hour</key><integer>14</integer><key>Minute</key><integer>0</integer></dict>
+
+  <key>StandardOutPath</key><string>__REPO__/data/launchd.log</string>
+  <key>StandardErrorPath</key><string>__REPO__/data/launchd.log</string>
+</dict>
+</plist>

@@ -58,3 +58,8 @@ waivers:
   min_gain_waiver: 8.0       # rolling priority: a claim must clear a higher bar
   rolling_priority: true
   stream_margin: 1.5         # K / D/ST streamer must beat our starter by this much
+
+# Run schedule (Eastern): Thursday 2pm full run, Saturday 2pm recheck. The Sunday 11:45am
+# inactive check is off unless enabled here (and its launchd template / cron is turned on).
+schedule:
+  sunday_inactive_check: false

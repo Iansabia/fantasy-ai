@@ -581,18 +581,38 @@ def cmd_report(cfg: AppConfig, args) -> int:
 
 
 def cmd_autopilot(cfg: AppConfig, args) -> int:
-    """Scheduler entry point. Lineups and IR: automatic (sent only with --send AND
-    auto_lineup: true). Waivers/add-drops: queued for approval only. Texts need --notify."""
+    """Scheduler entry point. Modes (schedule.py): full (Thursday: news, factors, IR, waiver ideas),
+    recheck (Saturday: lineups + IR only), inactives (Sunday, only if enabled), catchup (runs a
+    full run only if this week's Thursday run was missed and kickoff has not passed).
+    Lineups and IR: automatic (sent only with --send AND auto_lineup: true). Waivers/add-drops:
+    queued for approval only. With --notify every league gets a heartbeat text, even with no changes."""
+    import datetime as _dt
+    from . import schedule
     store = _store(args)
     pacer = _pacer(cfg)
+    base_mode = args.mode
+    if base_mode == "inactives" and not cfg.schedule.get("sunday_inactive_check", False):
+        summary("inactive check is disabled (schedule.sunday_inactive_check: false)")
+        return 0
+    now = _dt.datetime.now(_dt.timezone.utc)
+    leagues = [l for l in cfg.leagues if (l.fixture_dir is not None) == bool(args.demo)]
+    if base_mode == "catchup" and not any(schedule.missed_full(l.label, now) for l in leagues):
+        summary("catchup: nothing missed")
+        return 0
     if args.jitter:
         pacer.start_jitter()
     rc_all = 0
-    leagues = [l for l in cfg.leagues if (l.fixture_dir is not None) == bool(args.demo)]
     for i, lg in enumerate(leagues, 1):
         if not lg.fixture_dir and (not lg.league_id or not lg.team_id or not load_credentials(lg.auth_profile)):
             summary(f"league {i}: skipped (not configured or no cookies)")
             continue
+        mode = base_mode
+        if mode != "full" and schedule.missed_full(lg.label, now):
+            mode = "full"                       # Thursday run was missed: catch up before kickoff
+            summary(f"league {i}: missed Thursday run, running full catch-up")
+        elif mode == "catchup":
+            continue
+        full = mode == "full"
         n = notify.make_notifier(cfg.notify, lg.owner) if args.notify else None
         if not lg.fixture_dir:
             if pacer.in_cooldown(lg.name):
@@ -601,7 +621,7 @@ def cmd_autopilot(cfg: AppConfig, args) -> int:
             pacer.between_leagues()
         try:
             _, reader, writer = _setup(cfg, lg.name)
-            state = reader.load(free_agents=True, transactions=True)
+            state = reader.load(free_agents=full, transactions=full)
             _prepare(cfg, state, reader, args)
             pr = _prefs(lg, state)
             res = optimize(state, prefs=pr)
@@ -618,8 +638,8 @@ def cmd_autopilot(cfg: AppConfig, args) -> int:
             hurt = notify.msg_starter_injuries(lg.label, state)
             if n and hurt:
                 n.send(hurt)
-            queued = _queue_trade_ideas(cfg, lg, state, pr, args)
-            if args.waivers:
+            queued = _queue_trade_ideas(cfg, lg, state, pr, args) if full else 0
+            if full or args.waivers:
                 from .waivers import rank_with_checks
                 existing = {_pending_signature(a.payload) for a in store.open_actions()}
                 ideas, failures = rank_with_checks(state, limit=2, prefs=pr, cfg=cfg.waivers)
@@ -644,7 +664,13 @@ def cmd_autopilot(cfg: AppConfig, args) -> int:
                     if n:
                         n.send(notify.msg_pending(a))
             moves = len(res.moves) + len(res.ir_moves)
-            summary(f"league {i}: {moves} moves, {status}; {queued} queued for approval")
+            summary(f"league {i}: {mode}: {moves} moves, {status}; {queued} queued for approval")
+            if rc == 0:
+                schedule.record(lg.label, mode, {"moves": moves, "queued": queued, "sent": send})
+            if n:
+                beat = "waivers" if (mode == "recheck" and args.waivers) else mode
+                n.send(schedule.heartbeat(lg.label, beat, moves, queued, send and rc == 0,
+                                          None if rc in (0,) else f"exit code {rc}"))
         except PacingStop as e:
             rc_all = rc_all or 4
             summary(f"league {i}: paused (ESPN pushed back)")
@@ -655,7 +681,25 @@ def cmd_autopilot(cfg: AppConfig, args) -> int:
             rc_all = rc_all or 1
             summary(f"league {i}: error ({type(e).__name__})")
             print(f"{lg.label}: error: {e}")
+            if n:
+                n.send(schedule.heartbeat(lg.label, mode, 0, 0, False, type(e).__name__))
     return rc_all
+
+
+def cmd_status(cfg: AppConfig, args) -> int:
+    import datetime as _dt
+    from . import schedule
+    now = _dt.datetime.now(_dt.timezone.utc)
+    labels = [l.label for l in cfg.leagues if not l.fixture_dir]
+    print(f"Now: {now.astimezone(schedule.ET).strftime('%a %b %d %I:%M%p ET')}")
+    for line in schedule.status_lines(labels, now, cfg.schedule.get("sunday_inactive_check", False)):
+        print(f"  {line}")
+    pacer = _pacer(cfg)
+    for l in cfg.leagues:
+        cd = pacer.in_cooldown(l.name)
+        if cd:
+            print(f"  {l.label}: ESPN cooldown until {cd}")
+    return 0
 
 
 def cmd_poll_telegram(cfg: AppConfig, args) -> int:
@@ -751,9 +795,12 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--send", action="store_true", help="really set lineups (needs auto_lineup: true)")
     p.add_argument("--waivers", action="store_true", help="also queue top waiver ideas for approval")
     p.add_argument("--jitter", action="store_true", help="random 0-10 min start delay (scheduled runs)")
+    p.add_argument("--mode", choices=["full", "recheck", "inactives", "catchup"], default="full",
+                   help="full (Thu), recheck (Sat), inactives (Sun, if enabled), catchup (only if Thu was missed)")
     p.add_argument("--notify", action="store_true")
     p.add_argument("--demo", action="store_true", help="run on fixture leagues only")
     evidence(p)
+    sub.add_parser("status", help="last successful run per league; warns about missed scheduled runs")
     sub.add_parser("poll-telegram", help="process 'approve N' / 'reject N' replies")
     sub.add_parser("poll-imessage", help="process 'approve N' / 'reject N' iMessage replies (macOS)")
     p = sub.add_parser("state", help="encrypted CI state")
@@ -771,7 +818,7 @@ def main(argv: list[str] | None = None) -> int:
                "trade": cmd_trade, "hype": cmd_hype, "scout": cmd_scout, "trade-ideas": cmd_trade_ideas,
                "calc-compare": cmd_calc_compare, "pending": cmd_pending, "approve": cmd_approve,
                "reject": cmd_reject, "report": cmd_report, "autopilot": cmd_autopilot,
-               "poll-telegram": cmd_poll_telegram, "poll-imessage": cmd_poll_imessage, "state": cmd_state}[args.cmd]
+               "poll-telegram": cmd_poll_telegram, "status": cmd_status, "poll-imessage": cmd_poll_imessage, "state": cmd_state}[args.cmd]
     if not quiet:
         cfg = load_config(args.config)
         try:

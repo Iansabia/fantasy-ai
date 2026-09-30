@@ -171,9 +171,14 @@ community-attested and not yet confirmed on the wire.
 
 ### GitHub Actions (public repo safe)
 
-`.github/workflows/autopilot.yml` runs lineups about an hour before each lock (Thu, Sun early,
-Sun late, Sun night, Mon), waiver suggestions Tue/Wed, and reads Telegram approvals every 30
-minutes in season.
+`.github/workflows/autopilot.yml` runs a full autopilot Thursday 2pm ET (news, factors, Vegas, IR,
+waiver ideas), a recheck Saturday 2pm ET (lineups + IR only, fresh news and injuries, only changes
+what changed), an optional Sunday 11:45am ET inactive check (off unless
+`schedule.sunday_inactive_check: true`), waiver suggestions Tue/Wed, and reads Telegram approvals
+every 30 minutes in season. Every scheduled run texts each owner a one-line heartbeat, even when
+nothing changed ("Saturday recheck: no changes"). If Thursday's run is missed (laptop asleep, CI
+outage), the next run before Sunday kickoff upgrades itself to a full run, and a catch-up job checks
+every few hours. `fai status` shows the last successful run per league and warns about missed runs.
 
 - Config and cookies come only from secrets: `LEAGUES_YAML` (the whole leagues.yaml),
   `ESPN_S2_<PROFILE>`, `SWID_<PROFILE>`, `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`,
@@ -189,8 +194,10 @@ minutes in season.
 
 ### On a Mac
 
-`deploy/launchd/*.plist.template` are launchd jobs for the same schedule. They are templates:
-replace `__REPO__` and load them yourself.
+`deploy/launchd/*.plist.template` are launchd jobs for the same schedule (Thursday full, Saturday
+recheck, Sunday inactives disabled, hourly catch-up that also runs at login, Tue/Wed waivers,
+iMessage polling). They are templates: replace `__REPO__` and load them yourself. launchd runs a
+missed calendar job once when the Mac wakes.
 
 ## Notifications
 
