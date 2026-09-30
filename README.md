@@ -42,6 +42,12 @@ fai report demo
   but still in the IR slot is activated if there is a roster spot; if not, a drop is suggested and
   waits in the approval queue. IR moves go in a separate request after the lineup, because an IR
   move has not been captured on the wire yet and one request is all-or-nothing.
+- **Your rules win.** Text the bot "start Mitchell this week", "always start Bijan", "never drop X".
+  They land in `data/preferences.json`: forced starts fill a legal slot first (skipped with a text if
+  the player is out or on bye), never-drop players are never offered in waivers or trades, and the
+  move reason says "you asked". "Find me a trade for X" is picked up by the next autopilot run and
+  any fair options go to the approval queue. Each run writes `data/snapshot.json` so the bot can
+  answer "why did you bench Pittman?".
 - **Worth = ESPN projection x news x status x factors.** Factors, each capped and tunable in
   `factors:`: opponent points allowed to the position (ESPN), home/away, Vegas implied team total and
   spread (The Odds API, optional `ODDS_API_KEY`), game script, usage trend over 3 weeks (nflverse via

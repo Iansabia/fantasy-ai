@@ -20,6 +20,14 @@ def no_network(monkeypatch):
     monkeypatch.setattr(socket.socket, "connect", guard)
 
 
+@pytest.fixture(autouse=True)
+def isolated_data_dir(tmp_path, monkeypatch):
+    """preferences/requests/snapshot files live in a temp dir during tests."""
+    d = tmp_path / "fai-data"
+    monkeypatch.setenv("FAI_DATA_DIR", str(d))
+    return d
+
+
 @pytest.fixture
 def demo_state():
     return parse_league(b.demo_league(), b.pro_teams(), 1, raw_fa=b.demo_free_agents(),

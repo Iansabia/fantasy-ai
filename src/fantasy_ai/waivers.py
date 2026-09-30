@@ -26,7 +26,7 @@ class WaiverSuggestion:
     reason: str
 
 
-def weakest_by_position(state: LeagueState) -> dict[str, Player]:
+def weakest_by_position(state: LeagueState, prefs=None) -> dict[str, Player]:
     """Weakest droppable player per position. Never locked players, never players in the IR
     slot, and never IR-eligible players while an IR slot can still hold them (they are about to
     move to IR, which costs no bench spot)."""
@@ -35,7 +35,7 @@ def weakest_by_position(state: LeagueState) -> dict[str, Player]:
     ir_room = state.slot_counts.get(IR, 0) - sum(1 for p in state.roster if p.on_ir_slot)
     out: dict[str, Player] = {}
     for p in state.roster:
-        if p.locked or p.on_ir_slot:
+        if p.locked or p.on_ir_slot or (prefs is not None and prefs.keeps(p.name)):
             continue
         if p.ir_eligible() and ir_room > 0:
             ir_room -= 1
@@ -46,9 +46,11 @@ def weakest_by_position(state: LeagueState) -> dict[str, Player]:
     return out
 
 
-def rank_free_agents(state: LeagueState, limit: int = 5, min_gain: float = MIN_GAIN) -> list[WaiverSuggestion]:
+def rank_free_agents(state: LeagueState, limit: int = 5, min_gain: float = MIN_GAIN,
+                     prefs=None) -> list[WaiverSuggestion]:
+    """prefs.never_drop players are never suggested as drops."""
     week = state.scoring_period
-    weakest = weakest_by_position(state)
+    weakest = weakest_by_position(state, prefs)
     suggestions: list[WaiverSuggestion] = []
     for fa in state.free_agents:
         drop = weakest.get(fa.position)

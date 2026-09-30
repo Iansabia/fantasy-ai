@@ -49,7 +49,11 @@ def _side(state: LeagueState, team_id: int, sends: list[Player], receives: list[
                       round((after - before) * weeks_left, 1), round(after - before, 1))
 
 
-def evaluate_trade(state: LeagueState, give: list[Player], get: list[Player]) -> TradeEval:
+def evaluate_trade(state: LeagueState, give: list[Player], get: list[Player], prefs=None) -> TradeEval:
+    if prefs is not None:
+        kept = [p.name for p in give if prefs.keeps(p.name)]
+        if kept:
+            raise ValueError(f"Marked never drop / never trade: {', '.join(kept)}")
     mine = {p.player_id for p in state.roster}
     bad_give = [p.name for p in give if p.player_id not in mine]
     if bad_give:

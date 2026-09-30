@@ -38,6 +38,7 @@ from .espn_write import (OwnTeamViolation, TransactionWriter, WriteRejected, che
                          trade_proposal_payload, transaction_url, waiver_payload)
 from .lineup import DISPLAY_ORDER, LineupResult, optimize
 from .pacing import Pacer, PacingStop
+from . import prefs as prefs_mod
 from .pending import PendingStore, checks_for_add_drop, checks_for_trade, verify
 from .trades import evaluate_trade
 from .waivers import rank_free_agents
@@ -125,6 +126,41 @@ def _queue(cfg: AppConfig, lg: LeagueConfig, kind: str, summary_text: str, paylo
     return 0
 
 
+def _prefs(lg: LeagueConfig, state):
+    return prefs_mod.load_prefs(state.scoring_period, lg.label, lg.name)
+
+
+def _snapshot(lg: LeagueConfig, state, res) -> None:
+    try:
+        prefs_mod.write_snapshot(lg.label, state, res)
+    except OSError as e:
+        print(f"Note: could not write snapshot ({e})")
+
+
+def _queue_trade_ideas(cfg: AppConfig, lg: LeagueConfig, state, prefs, args) -> int:
+    """Handle data/requests.json trade_idea items for this league: queue proposals for approval."""
+    queued = 0
+    n = _notifier(cfg, lg, args)
+    for req in prefs_mod.take_requests("trade_idea", lg.label, lg.name):
+        player = state.find_player(req.get("player") or "")
+        if not player:
+            if n:
+                n.send(f"🔎 {lg.label} | Trade ideas\n\n• Couldn't find {req.get('player')} in the league")
+            continue
+        ideas = prefs_mod.trade_ideas(state, player, prefs)
+        if not ideas and n:
+            n.send(f"🔎 {lg.label} | Trade ideas\n\n• No fair trade found for {player.name} that helps your lineup")
+        for give, get, ev in ideas:
+            g_ids, r_ids = [p.player_id for p in give], [p.player_id for p in get]
+            payload = trade_proposal_payload(lg.team_id, ev.partner.team_id, state.scoring_period, g_ids, r_ids)
+            text = (f"give {', '.join(p.name for p in give)} get {', '.join(p.name for p in get)} "
+                    f"({ev.partner.team_name}), {ev.me.per_week:+.1f} pts/wk.")
+            if _queue(cfg, lg, "TRADE_PROPOSAL", text, payload, checks_for_trade(g_ids, r_ids, ev.partner.team_id),
+                      args, quiet_print=True) == 0:
+                queued += 1
+    return queued
+
+
 def _pending_signature(payload: dict) -> str:
     return f"{payload.get('type')}:" + ",".join(f"{i.get('type')}{i.get('playerId')}" for i in payload.get("items", []))
 
@@ -183,7 +219,8 @@ def cmd_lineup(cfg: AppConfig, args) -> int:
     lg, reader, writer = _setup(cfg, args.league)
     state = reader.load()
     info = _prepare(cfg, state, reader, args)
-    res = optimize(state)
+    res = optimize(state, prefs=_prefs(lg, state))
+    _snapshot(lg, state, res)
     print(f"{lg.label}: {state.my_team.name}, week {state.scoring_period}")
     print(f"Inputs: ESPN projections"
           + (f", news for {info['news_players']} players" if info["news"] else ", no news (--no-news or offline)")
@@ -193,6 +230,9 @@ def cmd_lineup(cfg: AppConfig, args) -> int:
         print(f"Note: {w}")
     if not res.moves and not res.ir_moves and not res.ir_drop:
         print(f"Lineup already optimal ({res.after_points} expected points).")
+        n = _notifier(cfg, lg, args)
+        if n and res.pref_skipped:
+            n.send(notify.msg_pref_skipped(lg.label, res.pref_skipped))
         return 0
     if res.moves:
         print(f"\nMoves (expected {res.before_points} -> {res.after_points}, gain {res.gain:+.2f}):")
@@ -207,6 +247,8 @@ def cmd_lineup(cfg: AppConfig, args) -> int:
     n = _notifier(cfg, lg, args)
     if n and args.send and rc == 0 and (res.moves or res.ir_moves):
         n.send(notify.msg_lineup_changes(lg.label, res))
+    if n and res.pref_skipped:
+        n.send(notify.msg_pref_skipped(lg.label, res.pref_skipped))
     return rc
 
 
@@ -245,7 +287,7 @@ def cmd_waivers(cfg: AppConfig, args) -> int:
     state = reader.load(free_agents=True)
     from .news.pipeline import players_to_research
     _prepare(cfg, state, reader, args, research=players_to_research(state))
-    sugg = rank_free_agents(state, limit=args.limit)
+    sugg = rank_free_agents(state, limit=args.limit, prefs=_prefs(lg, state))
     print(f"{lg.label}: waiver ideas, week {state.scoring_period} (approval required)")
     if not sugg:
         print("  No free agent beats your weakest player by enough to matter.")
@@ -280,7 +322,7 @@ def cmd_trade(cfg: AppConfig, args) -> int:
             bucket.append(p)
     _prepare(cfg, state, reader, args, research=give + get)
     try:
-        ev = evaluate_trade(state, give, get)
+        ev = evaluate_trade(state, give, get, prefs=_prefs(lg, state))
     except ValueError as e:
         raise SystemExit(str(e))
     print(f"{lg.label}: trade check, week {state.scoring_period}")
@@ -369,7 +411,10 @@ def cmd_report(cfg: AppConfig, args) -> int:
         _, reader, _ = _setup(cfg, lg.name)
         state = reader.load(free_agents=True, transactions=True)
         _prepare(cfg, state, reader, args)
-        facts = insights.build_facts(lg.label, state, optimize(state), rank_free_agents(state, limit=3))
+        pr = _prefs(lg, state)
+        res = optimize(state, prefs=pr)
+        _snapshot(lg, state, res)
+        facts = insights.build_facts(lg.label, state, res, rank_free_agents(state, limit=3, prefs=pr))
         text, used = insights.llm_note(facts) if args.llm else (insights.template_note(facts), False)
         print(text)
         if args.llm and not used:
@@ -410,7 +455,9 @@ def cmd_autopilot(cfg: AppConfig, args) -> int:
             _, reader, writer = _setup(cfg, lg.name)
             state = reader.load(free_agents=True, transactions=True)
             _prepare(cfg, state, reader, args)
-            res = optimize(state)
+            pr = _prefs(lg, state)
+            res = optimize(state, prefs=pr)
+            _snapshot(lg, state, res)
             send = bool(args.send and cfg.settings.auto_lineup)
             rc, status = _apply_lineup(cfg, lg, writer, state, res, send, args)
             rc_all = rc_all or rc
@@ -418,13 +465,15 @@ def cmd_autopilot(cfg: AppConfig, args) -> int:
                 n.send(notify.msg_paused(lg.label, "ESPN pushed back or a write cap was hit"))
             if n and rc == 0 and (res.moves or res.ir_moves):
                 n.send(notify.msg_lineup_changes(lg.label, res, sent=send))
+            if n and res.pref_skipped:
+                n.send(notify.msg_pref_skipped(lg.label, res.pref_skipped))
             hurt = notify.msg_starter_injuries(lg.label, state)
             if n and hurt:
                 n.send(hurt)
-            queued = 0
+            queued = _queue_trade_ideas(cfg, lg, state, pr, args)
             if args.waivers:
                 existing = {_pending_signature(a.payload) for a in store.open_actions()}
-                for s in rank_free_agents(state, limit=2):
+                for s in rank_free_agents(state, limit=2, prefs=pr):
                     drop_id = s.drop.player_id if s.drop else None
                     payload = (waiver_payload(lg.team_id, state.scoring_period, s.add.player_id, drop_id, bid=0)
                                if s.kind == "WAIVER" else

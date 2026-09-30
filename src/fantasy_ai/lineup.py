@@ -22,6 +22,7 @@ from .models import LeagueState, Player
 from .slots import BENCH, IR, NON_STARTING, slot_name
 
 KEEP_BONUS = 1e-3  # tie-break: prefer leaving a player where he already is
+FORCE_BONUS = 1000.0  # "you asked" starts fill a legal slot before anything else
 FLEX_SLOTS = {3, 5, 7, 23}  # RB/WR, WR/TE, OP, RB/WR/TE
 DISPLAY_ORDER = [0, 2, 4, 6, 3, 5, 23, 7, 16, 17, 20, 21]
 
@@ -51,6 +52,7 @@ class LineupResult:
     ir_moves: list[Move] = field(default_factory=list)
     ir_drop: Player | None = None          # roster full: suggested drop so ir_activate can come off IR
     ir_activate: Player | None = None
+    pref_skipped: list[str] = field(default_factory=list)   # owner requests we could not honor
 
     @property
     def gain(self) -> float:
@@ -91,10 +93,12 @@ def best_assignment(candidates: list[Player], open_slots: dict[int, int],
     return total, dict(assign)
 
 
-def optimize(state: LeagueState, roster: list[Player] | None = None) -> LineupResult:
+def optimize(state: LeagueState, roster: list[Player] | None = None, prefs=None) -> LineupResult:
+    """prefs: fantasy_ai.prefs.Prefs (owner's start/bench/never rules) or None."""
     roster = roster if roster is not None else state.roster
     week = state.scoring_period
     warnings: list[str] = []
+    pref_skipped: list[str] = []
     starting = {s: c for s, c in state.slot_counts.items() if s not in NON_STARTING}
 
     # Locked starters keep their slot and use up that slot. IR-slot players stay for the lineup
@@ -111,10 +115,22 @@ def optimize(state: LeagueState, roster: list[Player] | None = None) -> LineupRe
     open_slots = {s: c for s, c in open_slots.items() if c > 0}
 
     candidates = [p for p in roster if p.player_id not in fixed and p.available(week)]
+    if prefs is not None:
+        for p in roster:
+            if prefs.starts(p.name) and not p.available(week):
+                why = "bye week" if p.on_bye(week) else f"{p.injury_status}" if p.is_out() else "reported out"
+                pref_skipped.append(f"You asked to start {p.name}, but he can't play ({why}); started the best available instead.")
+            elif prefs.starts(p.name) and p.player_id in fixed and p.lineup_slot in NON_STARTING:
+                pref_skipped.append(f"You asked to start {p.name}, but he is locked on the bench.")
+            if prefs.benches(p.name) and p.player_id in fixed and p.lineup_slot not in NON_STARTING:
+                pref_skipped.append(f"You asked to bench {p.name}, but he is already locked in.")
+        candidates = [p for p in candidates if not prefs.benches(p.name)]
 
     def value(p: Player, slot: int) -> float:
         ev = p.lineup_value(week)            # questionable/doubtful discount lives here
         v = ev + 1e-6                        # >0 so a healthy 0-projection player can still fill a hole
+        if prefs is not None and prefs.starts(p.name):
+            v += FORCE_BONUS
         if p.lineup_slot == slot:
             v += KEEP_BONUS
         if slot not in FLEX_SLOTS:
@@ -135,7 +151,18 @@ def optimize(state: LeagueState, roster: list[Player] | None = None) -> LineupRe
     moves.sort(key=lambda m: 0 if m.to_slot == BENCH else 1)  # vacate before fill
     by_id = {p.player_id: p for p in roster}
     for m in moves:
-        m.reason = move_reason(by_id[m.player_id], m, week)
+        p = by_id[m.player_id]
+        m.reason = move_reason(p, m, week)
+        if prefs is not None and m.to_slot not in NON_STARTING and prefs.starts(p.name):
+            m.reason = f"started {p.name} at {slot_name(m.to_slot)}: you asked (worth {p.lineup_value(week):.1f})"
+        elif prefs is not None and m.to_slot == BENCH and prefs.benches(p.name):
+            m.reason = f"benched {p.name}: you asked"
+    if prefs is not None:
+        for p in roster:
+            if prefs.starts(p.name) and p.available(week) and target.get(p.player_id) in NON_STARTING \
+                    and p.player_id not in fixed:
+                pref_skipped.append(f"You asked to start {p.name}, but no legal slot was left.")
+    warnings.extend(pref_skipped)
 
     current = {p.player_id: p.lineup_slot for p in roster}
     res = LineupResult(
@@ -145,11 +172,12 @@ def optimize(state: LeagueState, roster: list[Player] | None = None) -> LineupRe
         target=target,
         warnings=warnings,
     )
-    plan_ir(state, roster, res)
+    res.pref_skipped = pref_skipped
+    plan_ir(state, roster, res, prefs)
     return res
 
 
-def plan_ir(state: LeagueState, roster: list[Player], res: LineupResult) -> None:
+def plan_ir(state: LeagueState, roster: list[Player], res: LineupResult, prefs=None) -> None:
     """Fill open IR slots with IR-eligible players, and activate IR-slot players who are no
     longer IR-eligible (ESPN treats them as an illegal IR stash). Activation needs a roster
     spot; if there is none, suggest a drop for the approval queue instead of acting."""
@@ -187,7 +215,7 @@ def plan_ir(state: LeagueState, roster: list[Player], res: LineupResult) -> None
             active_count += 1
         else:
             droppable = [q for q in roster if res.target.get(q.player_id) == BENCH and not q.locked
-                         and q.player_id != p.player_id]
+                         and q.player_id != p.player_id and not (prefs and prefs.keeps(q.name))]
             if droppable:
                 res.ir_drop = min(droppable, key=lambda q: q.ros_value(state.scoring_period))
                 res.ir_activate = p

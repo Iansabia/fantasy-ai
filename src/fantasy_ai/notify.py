@@ -236,6 +236,10 @@ def msg_pending(a: PendingAction) -> str:
             f"Reply 'approve {a.id}' or 'reject {a.id}'")
 
 
+def msg_pref_skipped(label: str, notes: list[str]) -> str:
+    return f"⚠️ {label} | Couldn't follow your request\n\n" + "\n".join(f"• {n}" for n in notes)
+
+
 def msg_paused(label: str, why: str) -> str:
     return (f"⏸️ {label} | Paused\n\n"
             f"• {why}\n"
