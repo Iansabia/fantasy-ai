@@ -29,7 +29,8 @@ def lineup_research_set(state: LeagueState) -> list[Player]:
 
 
 def prepare(state: LeagueState, reader, factor_cfg: dict | None = None, *, news: bool = True,
-            factors: bool = True, research: list[Player] | None = None, llm=None, client=None) -> dict:
+            factors: bool = True, research: list[Player] | None = None, llm=None, client=None,
+            hype_cfg: dict | None = None) -> dict:
     """Mutates state. Returns a small dict describing which inputs were used (for explain)."""
     info = {"news": False, "news_players": 0, "factor_sources": []}
     offline = reader.cfg.fixture_dir is not None
@@ -45,6 +46,10 @@ def prepare(state: LeagueState, reader, factor_cfg: dict | None = None, *, news:
         info["ownership"] = True
     except OSError:
         pass
+    from . import hype, usage_data
+    usage = None if offline else usage_data.load(state.year)
+    hype.apply(state, usage, hype_cfg)
+    info["hype"] = usage is not None
     if factors:
         ctx = providers.build_context(state, reader.raw_pro_teams(),
                                       reader.raw_positional_ratings(state.scoring_period),

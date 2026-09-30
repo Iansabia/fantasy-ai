@@ -11,8 +11,8 @@ license = { text = "MIT" }
 dependencies = ["espn-api", "pyyaml", "httpx", "python-dotenv"]
 
 [project.optional-dependencies]
-dev = ["pytest", "cryptography"]
-ci = ["anthropic", "cryptography"]   # Anthropic API fallback when no claude CLI; encrypted state
+dev = ["pytest", "cryptography", "nflreadpy", "polars"]
+ci = ["anthropic", "cryptography", "nflreadpy", "polars"]   # API fallback, encrypted state, nflverse usage
 
 [project.scripts]
 fai = "fantasy_ai.cli:main"

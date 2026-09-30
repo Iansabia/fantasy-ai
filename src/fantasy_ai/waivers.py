@@ -116,7 +116,9 @@ def week_worth(p: Player, state: LeagueState, k: int, cfg: dict) -> float:
             from .factors.score import matchup_multiplier
             m = matchup_multiplier(p.position, g.opp, ctx)
     back = 0.7 if (k == 1 and (p.is_out() or p.news_out)) else 1.0
-    return round(p.per_game() * m * back * bump, 2)
+    h = getattr(p, "hype", None)
+    fut = h.future_mult if h is not None else 1.0          # fill-ins lose credit once the starter returns
+    return round(p.per_game() * m * back * bump * fut, 2)
 
 
 def _best(players: list[Player], state: LeagueState, k: int, cfg: dict, cache: dict) -> tuple[float, int, set[int]]:
@@ -284,6 +286,12 @@ def evaluate_add(state: LeagueState, add: Player, prefs=None, cfg: dict | None =
     reason = f"{add.name} ({add.position}, {'waivers' if claim else 'free agent'}): {drop_txt}, +{gain:.1f} pts over {H} wks."
     if claim and cfg["rolling_priority"]:
         reason += f" Costs waiver priority, so it needs +{threshold:.0f}."
+    from .hype import line as hype_line
+    hl = hype_line(add)
+    if hl and getattr(add.hype, "label", "Steady") != "Steady":
+        lines.insert(0, hl)
+    if d is not None and getattr(d, "hype", None) is not None and d.hype.label in ("Fading", "Hype only", "Sell high"):
+        lines.append(hype_line(d))
     from .ownership import own_note
     note = own_note(add)
     if note and len(lines) < 4:
@@ -417,6 +425,7 @@ def audit(state: LeagueState, prefs=None, cfg: dict | None = None) -> list[dict]
             "ros": ros(p, state, cfg),
             "next3": round(sum(week_worth(p, state, k, cfg) for k in range(cfg["horizon"])), 1),
             "owned": p.percent_owned, "trend": own_note(p) or "",
+            "hype": p.hype.label if getattr(p, "hype", None) is not None else "",
         })
     rows.sort(key=lambda r: (not r["droppable"], r["ros"] + r["next3"]))
     return rows

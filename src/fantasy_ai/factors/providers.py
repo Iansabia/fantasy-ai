@@ -219,7 +219,7 @@ def build_context(state: LeagueState, raw_pro: dict, raw_ratings: dict | None = 
         ctx.vegas = fetch_vegas(client, names)
         teams = {p.pro_team for t in state.teams.values() for p in t.roster} | {p.pro_team for p in state.free_agents}
         ctx.weather = fetch_weather(client, ctx.games, teams)
-        ctx.usage = load_usage(state.year, state.scoring_period)
+        ctx.usage = {}   # usage trends now come from hype.py (nflverse via usage_data.py)
         ctx.second_proj = fetch_sleeper_proj(client, state)
         for name, got in (("Vegas", ctx.vegas), ("Open-Meteo", ctx.weather), ("nflverse usage", ctx.usage),
                           ("Sleeper projections", ctx.second_proj)):

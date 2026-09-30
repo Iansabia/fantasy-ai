@@ -83,7 +83,8 @@ def _notifier(cfg: AppConfig, lg: LeagueConfig, args) -> notify.Notifier | None:
 
 def _prepare(cfg: AppConfig, state, reader, args, research=None) -> dict:
     return engine.prepare(state, reader, cfg.factors, news=not getattr(args, "no_news", False),
-                          factors=not getattr(args, "no_factors", False), research=research)
+                          factors=not getattr(args, "no_factors", False), research=research,
+                          hype_cfg=getattr(cfg, "hype", None))
 
 
 def _submit(writer: TransactionWriter, payload: dict, send: bool, label: str = "") -> int:
@@ -277,6 +278,10 @@ def cmd_explain(cfg: AppConfig, args) -> int:
         print("  cannot play this week (bye / OUT / reported out)")
     print(f"  = worth this week      {p.lineup_value(wk):6.2f}")
     print(f"  rest-of-season value   {p.ros_value(wk):6.1f} (x{p.ros_multiplier:.3f} from role/buzz/usage)")
+    if getattr(p, "hype", None) is not None:
+        print(f"  hype vs substance      {p.hype.text}, ROS x{p.hype.ros_mult:.2f}, future weeks x{p.hype.future_mult:.2f}")
+        for r in p.hype.reasons:
+            print(f"      - {r}")
     if p.status in ("FREEAGENT", "WAIVERS"):
         from .waivers import evaluate_add
         w = evaluate_add(state, p, _prefs(lg, state), cfg.waivers)
@@ -302,10 +307,10 @@ def cmd_waivers(cfg: AppConfig, args) -> int:
     sugg, failures = rank_with_checks(state, limit=args.limit, prefs=pr, cfg=cfg.waivers)
     if args.audit:
         print(f"{lg.label}: roster audit, week {state.scoring_period}")
-        print(f"  {'player':24} {'pos':4} {'slot':9} {'drop?':6} {'ROS':>6} {'3wk':>5} {'own%':>5}  reason / trend")
+        print(f"  {'player':24} {'pos':4} {'slot':9} {'drop?':6} {'ROS':>6} {'3wk':>5} {'own%':>5}  {'hype label':24} reason / trend")
         for r in audit(state, pr, cfg.waivers):
             print(f"  {r['name']:24} {r['pos']:4} {r['slot']:9} {'yes' if r['droppable'] else 'no':6} "
-                  f"{r['ros']:6.1f} {r['next3']:5.1f} {r['owned']:5.0f}  {r['reason'] or '-'}"
+                  f"{r['ros']:6.1f} {r['next3']:5.1f} {r['owned']:5.0f}  {r['hype'][:24]:24} {r['reason'] or '-'}"
                   + (f" | {r['trend']}" if r['trend'] else ""))
         print()
     for f in failures:
@@ -363,7 +368,10 @@ def cmd_trade(cfg: AppConfig, args) -> int:
         print(f"  {side.team_name}: sends {', '.join(p.name for p in side.sends)}; "
               f"gets {', '.join(p.name for p in side.receives)}; ROS value {side.ros_delta:+.1f}, "
               f"starting lineup {side.lineup_delta:+.1f} ({side.per_week:+.1f}/wk)")
+    from .hype import line as hype_line
     for p in give + get:
+        if hype_line(p):
+            print(f"    {hype_line(p)}")
         for r in p.reasons[:2]:
             print(f"    {r}")
     print(f"Verdict: {ev.verdict}. {ev.reason}")
@@ -376,6 +384,25 @@ def cmd_trade(cfg: AppConfig, args) -> int:
     print("\nTrades are proposed only after your approval, never accepted automatically.")
     return _queue(cfg, lg, "TRADE_PROPOSAL", summary_text, payload,
                   checks_for_trade(give_ids, get_ids, ev.partner.team_id), args)
+
+
+def cmd_hype(cfg: AppConfig, args) -> int:
+    lg, reader, _ = _setup(cfg, args.league)
+    state = reader.load(free_agents=True)
+    from .news.pipeline import players_to_research
+    info = _prepare(cfg, state, reader, args, research=players_to_research(state))
+    if not info.get("hype"):
+        print("Note: nflverse usage data unavailable (offline or nflreadpy missing); labels use hype only.")
+    def show(title, players):
+        print(title)
+        print(f"  {'player':24} {'pos':4} {'label':30} {'sub':>3} {'hype':>4}  why")
+        for p in players:
+            h = p.hype
+            print(f"  {p.name:24} {p.position:4} {h.label:30} {h.substance:3d} {h.hype:4d}  {'; '.join(h.reasons[:3])}")
+    show(f"{lg.label}: hype vs substance, week {state.scoring_period}\nOur roster:", sorted(state.roster, key=lambda p: -p.hype.substance))
+    fas = sorted(state.free_agents, key=lambda p: -p.percent_owned)[: args.limit]
+    show("\nTop free agents (by roster %):", fas)
+    return 0
 
 
 def cmd_pending(cfg: AppConfig, args) -> int:
@@ -605,6 +632,10 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--propose", action="store_true", help="queue a TRADE_PROPOSAL for approval")
     p.add_argument("--notify", action="store_true")
     evidence(p)
+    p = sub.add_parser("hype", help="hype vs substance labels for our roster and top free agents")
+    p.add_argument("league")
+    p.add_argument("--limit", type=int, default=15)
+    evidence(p)
     sub.add_parser("pending", help="list queued actions")
     p = sub.add_parser("approve", help="re-check and send a queued action")
     p.add_argument("id")
@@ -636,7 +667,7 @@ def main(argv: list[str] | None = None) -> int:
     SUMMARY.clear()
     _PACER = None
     handler = {"leagues": cmd_leagues, "lineup": cmd_lineup, "explain": cmd_explain, "waivers": cmd_waivers,
-               "trade": cmd_trade, "pending": cmd_pending, "approve": cmd_approve,
+               "trade": cmd_trade, "hype": cmd_hype, "pending": cmd_pending, "approve": cmd_approve,
                "reject": cmd_reject, "report": cmd_report, "autopilot": cmd_autopilot,
                "poll-telegram": cmd_poll_telegram, "poll-imessage": cmd_poll_imessage, "state": cmd_state}[args.cmd]
     if not quiet:

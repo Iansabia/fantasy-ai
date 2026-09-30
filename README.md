@@ -68,6 +68,16 @@ fai report demo
   drop, that the lowest-value one was a candidate, and that no suggestion drops someone worth more
   than the add both rest-of-season and over 3 weeks (unless the add fills a starting slot the drop
   never would). A failed check blocks the suggestion and prints or texts "waiver check failed".
+- **Hype vs substance.** `fai hype <league>` labels our roster and top free agents: Real breakout, Role
+  growing, Fill-in (teammate returns), Hype only, Buy low, Sell high, Steady, Fading, with a
+  substance score and a hype score (0-100) and reasons with numbers ("targets 2 -> 9 per game,
+  target share 8% -> 24%, WR/TE room was healthy, so the role change is real"). Usage comes from
+  nflverse via `nflreadpy` (weekly stats, snap %, ffverse expected points, injury reports, last
+  season), cached in `data/nflverse` for a week. A spike that lined up with a teammate's absence
+  is discounted if he is back; points far above expected volume read as "sell high". The label
+  moves rest-of-season value and future-week worth in waivers and trades (fill-ins lose credit once
+  the starter returns, hype-only players get little). Route participation and red-zone splits are
+  not used (not available free for the current season without full play-by-play).
 - **Roster % as a signal.** ESPN's percent rostered, weekly change and percent started are tracked in
   `data/ownership_history.json` (6 weeks). A capped factor lifts risers and fades fallers in waiver
   and trade value, reasons show "rostered 42% (+22% this week, +37% over 3 wks)", free agents spiking
