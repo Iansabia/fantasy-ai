@@ -84,6 +84,19 @@ fai report demo
   are marked "likely claimed soon if you wait", and players the league is dropping are flagged.
   Percent started adds a small consensus factor (at most 3%) to the weekly score.
 - **Trades:** raw value swap plus the change in each team's best starting lineup.
+- **Team-need trade ideas** (`fai trade-ideas <league>`): value to a team is what its best lineups are
+  worth (next 3 weeks + rest of season + a small credit for first backups), computed on each team's
+  own roster. So a 3rd QB in a 1-QB league is worth little to you and a lot to a team whose QB is
+  weak or on bye. It searches 1-for-1, 2-for-1 and 2-for-2 deals with every team, keeps ones where
+  your lineup clearly gains, theirs does not clearly lose, and market value is close to fair, and
+  ranks them by your gain times acceptance odds. Each idea shows both lineup gains, FantasyCalc
+  values, hype labels, why this partner, and a pitch line. `--propose N` queues one for approval.
+- **Scouting** (`fai scout <league>`): every team's rank at QB/RB/WR/TE, holes, surplus, short-term
+  needs (starters on bye or out soon) and record, plus "best partner for our QB surplus".
+- **Market check** (`fai calc-compare <league>`): Spearman rank correlation between our
+  rest-of-season values and FantasyCalc redraft values (overall and by position), and the biggest
+  disagreements each way with our reasons. Below 0.6 prints a warning. FantasyCalc is a second
+  opinion and a "market" column in trade output; it never replaces our decision value.
 - **News and buzz** (`src/fantasy_ai/news/`): ESPN player news, NBC/Rotoworld, RotoBaller and
   FantasyPros RSS, Reddit r/fantasyfootball, and Sleeper trending adds/drops. The LLM turns each
   item into a small JSON label (status, role change, sentiment, confidence). Plain code turns

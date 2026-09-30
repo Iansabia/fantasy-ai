@@ -188,6 +188,10 @@ def compute(p, usage: UsageData | None, state) -> HypeResult:
             buy = True
             reasons.append(f"{xfp_pg:.1f} expected pts per game but only {fpts_pg:.1f} scored: volume is there")
 
+    injured = p.is_out() or p.ir_eligible() or p.news_out
+    still_big = recent_v is not None and recent_v >= (0.50 if primary == "carry_share" else 0.20)
+    if injured and jump < 0:
+        reasons.insert(0, f"{p.game_status.lower().replace('_', ' ')}: usage drop reflects the injury")
     if fill_in:
         label = "Fill-in"
     elif sell and substance < 70:
@@ -196,12 +200,16 @@ def compute(p, usage: UsageData | None, state) -> HypeResult:
         label = "Real breakout"
     elif substance >= 60 and jump > 0.03:
         label = "Role growing"
+    elif injured and jump < 0:
+        label = "Steady"                     # injured: a usage drop says nothing about his role
+    elif (substance <= 38 or own_3 <= -15) and jump < -0.05 and not still_big:
+        label = "Fading"                     # falling usage beats a volume-based buy-low call
     elif buy:
         label = "Buy low"
     elif hype >= 60 and substance < 58:
         label = "Hype only"
         reasons.insert(0, "usage is flat" if abs(jump) < 0.03 else "usage does not back it up")
-    elif substance <= 38 or own_3 <= -15:
+    elif (substance <= 38 or own_3 <= -15) and not still_big:
         label = "Fading"
     else:
         label = "Steady"

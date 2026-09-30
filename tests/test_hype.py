@@ -125,3 +125,16 @@ def test_build_from_raw_nflverse_rows():
     u = build(2026, stats, snaps, opp, [], [])
     r = u.weekly["deebo samuel"][0]
     assert r["snap_pct"] == 0.8 and r["xfp"] == 13.5 and round(r["carry_share"], 2) == 0.1
+
+
+def test_bellcow_share_drop_is_not_fading_and_injured_is_not_buy_low():
+    s = state_with(("Bell Cow", "RB", 20, 1, "ACTIVE"), ("Hurt Rb", "RB", 0, 1, "INJURY_RESERVE"),
+                   ("Falling Wr", "WR", 9, 1, "ACTIVE"))
+    u = UsageData(2026, {
+        "bell cow": rows("AAA", "RB", [(1, 0.72, 0.8, 3, 20, 18), (2, 0.60, 0.62, 3, 16, 16), (3, 0.60, 0.62, 3, 16, 16)]),
+        "hurt rb": rows("AAA", "RB", [(1, 0.61, 0.86, 3, 8, 12), (2, 0.40, 0.40, 2, 8, 11), (3, 0.38, 0.40, 2, 8, 11)]),
+        "falling wr": rows("AAA", "WR", [(1, 0.23, 0.9, 9, 8, 11), (2, 0.12, 0.6, 4, 7, 11), (3, 0.12, 0.6, 4, 7, 11)])})
+    assert label(s, "Bell Cow", u).label != "Fading"
+    hurt = label(s, "Hurt Rb", u)
+    assert hurt.label == "Steady" and any("injury" in r for r in hurt.reasons)
+    assert label(s, "Falling Wr", u).label == "Fading"
