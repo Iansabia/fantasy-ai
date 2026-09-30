@@ -59,8 +59,11 @@ def test_never_start_and_bench_reason():
 
 
 def test_never_drop_respected_by_waivers_trades_and_ideas(demo_state):
-    keep = Prefs(never_drop={"tiny tim", "backup bo"})
-    assert "Tiny Tim" not in [s.drop.name for s in rank_free_agents(demo_state, prefs=keep)]
+    from test_waivers_trades import full_demo
+    full_demo(demo_state)
+    keep = Prefs(never_drop={"filler guy", "backup bo"})
+    drops = [s.drop.name for s in rank_free_agents(demo_state, prefs=keep) if s.drop]
+    assert drops and "Filler Guy" not in drops and "Backup Bo" not in drops
     with pytest.raises(ValueError, match="never"):
         evaluate_trade(demo_state, [demo_state.find_player("Backup Bo")], [demo_state.find_player("Rival RB1")], prefs=keep)
     assert trade_ideas(demo_state, demo_state.find_player("Backup Bo"), keep) == []

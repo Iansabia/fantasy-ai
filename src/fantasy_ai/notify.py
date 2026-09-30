@@ -14,6 +14,7 @@ from __future__ import annotations
 import os
 import re
 import subprocess
+from pathlib import Path
 from typing import Protocol
 
 import httpx
@@ -67,6 +68,36 @@ class IMessageBackend:
         )
         # numbers and text go in as argv, never interpolated into the script
         subprocess.run(["osascript", "-e", script, to, text], check=True, capture_output=True, timeout=30)
+        remember_sent(text)
+
+
+SENT_LOG = "imessage_sent.json"
+
+
+def _sent_path():
+    return Path(os.environ.get("FAI_DATA_DIR") or ROOT / "data") / SENT_LOG
+
+
+def remember_sent(text: str) -> None:
+    """Texting your own number echoes the bot's message back as an incoming one, so the
+    poller must know what the bot itself sent. Keeps the last 300 texts."""
+    import json
+    p = _sent_path()
+    try:
+        seen = json.loads(p.read_text())
+    except (OSError, ValueError):
+        seen = []
+    seen = (seen + [text.strip()])[-300:]
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(json.dumps(seen))
+
+
+def was_sent_by_bot(text: str) -> bool:
+    import json
+    try:
+        return text.strip() in set(json.loads(_sent_path().read_text()))
+    except (OSError, ValueError):
+        return False
 
 
 class TwilioBackend:

@@ -54,8 +54,14 @@ fai report demo
   optional `nflreadpy`), wind and rain for outdoor games (Open-Meteo), a second projection
   (Sleeper, when available), and floor vs. ceiling when you are a big favorite or underdog. Every
   factor adds a one-line reason, and `fai explain` shows them all.
-- **Waivers:** rest-of-season projected points vs. the weakest droppable player at the same
-  position. Locked and IR-slot players are never suggested as drops.
+- **Waivers:** each add is scored on how much it improves your best starting lineup over the next
+  3 weeks (FLEX counts, byes and future matchups included) plus rest-of-season value counted by how
+  often he would start. ROS includes news, role changes, Sleeper buzz, a second projection, and a
+  handcuff bump when the RB ahead of him is out. The drop can be any bench player, but never a
+  locked, IR, IR-bound or never-drop player, and never one that breaks roster minimums or leaves a
+  slot empty in a bye week. Waiver claims cost rolling priority, so they need a bigger gain than a
+  free-agent add. K and D/ST streamers are flagged by matchup and Vegas. Each idea shows its top
+  reasons; tune it under `waivers:`.
 - **Trades:** raw value swap plus the change in each team's best starting lineup.
 - **News and buzz** (`src/fantasy_ai/news/`): ESPN player news, NBC/Rotoworld, RotoBaller and
   FantasyPros RSS, Reddit r/fantasyfootball, and Sleeper trending adds/drops. The LLM turns each

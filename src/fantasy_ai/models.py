@@ -111,6 +111,7 @@ class LeagueState:
     matchup: dict | None = None
     transactions: list[dict] = field(default_factory=list)
     league_name: str = ""
+    context: object | None = None             # factors.context.WeekContext once engine.prepare ran
 
     @property
     def my_team(self) -> Team:

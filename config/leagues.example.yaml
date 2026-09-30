@@ -47,3 +47,14 @@ pacing:
   writes_per_league_per_day: 6
   writes_per_run: 3
   cooldown_hours: 24
+
+# Waiver scoring (defaults in src/fantasy_ai/waivers.py).
+waivers:
+  horizon: 3                 # weeks of lineup impact
+  next3_weight: 1.0
+  ros_weight: 1.0
+  handcuff_bump: 0.15        # RB whose starter is OUT/IR
+  min_gain_free_agent: 3.0   # points over the horizon
+  min_gain_waiver: 8.0       # rolling priority: a claim must clear a higher bar
+  rolling_priority: true
+  stream_margin: 1.5         # K / D/ST streamer must beat our starter by this much

@@ -277,6 +277,16 @@ def cmd_explain(cfg: AppConfig, args) -> int:
         print("  cannot play this week (bye / OUT / reported out)")
     print(f"  = worth this week      {p.lineup_value(wk):6.2f}")
     print(f"  rest-of-season value   {p.ros_value(wk):6.1f} (x{p.ros_multiplier:.3f} from role/buzz/usage)")
+    if p.status in ("FREEAGENT", "WAIVERS"):
+        from .waivers import evaluate_add
+        w = evaluate_add(state, p, _prefs(lg, state), cfg.waivers)
+        if w is None:
+            print("  waiver view: no legal drop (roster minimums / bye coverage)")
+        else:
+            verdict = "worth it" if w.gain >= w.threshold else f"below the +{w.threshold:.0f} bar"
+            print(f"  waiver view: {w.reason} ({verdict})")
+            for line in w.why:
+                print(f"      - {line}")
     print(f"Inputs used: ESPN" + (", news" if info["news"] else "") +
           ("" if not info["factor_sources"] else ", " + ", ".join(info["factor_sources"])))
     return 0
@@ -287,17 +297,28 @@ def cmd_waivers(cfg: AppConfig, args) -> int:
     state = reader.load(free_agents=True)
     from .news.pipeline import players_to_research
     _prepare(cfg, state, reader, args, research=players_to_research(state))
-    sugg = rank_free_agents(state, limit=args.limit, prefs=_prefs(lg, state))
+    sugg = rank_free_agents(state, limit=args.limit, prefs=_prefs(lg, state), cfg=cfg.waivers)
     print(f"{lg.label}: waiver ideas, week {state.scoring_period} (approval required)")
     if not sugg:
-        print("  No free agent beats your weakest player by enough to matter.")
-        return 0
+        print("  No free agent improves your team by enough to matter (claims need more, they cost priority).")
     for i, s in enumerate(sugg, 1):
-        why = f" [{'; '.join(s.add.reasons[:1])}]" if s.add.reasons else ""
-        print(f"  {i}. add {s.add.name}, drop {s.drop.name if s.drop else '-'} [{s.kind}] {s.reason}{why}")
+        print(f"  {i}. [{s.kind}] {s.reason}")
+        for w in s.why:
+            print(f"       - {w}")
+    from .waivers import streamers
+    streams = streamers(state, prefs=_prefs(lg, state), cfg=cfg.waivers)
+    if streams:
+        print("\nStreamers for this week (K / D/ST):")
+        for s in streams:
+            print(f"  - {s.reason}")
+            for w in s.why:
+                print(f"       - {w}")
     if args.pick is None:
-        print("\nRe-run with --pick N to queue one for approval.")
+        if sugg:
+            print("\nRe-run with --pick N to queue one for approval.")
         return 0
+    if not 1 <= args.pick <= len(sugg):
+        raise SystemExit(f"--pick must be between 1 and {len(sugg)}")
     s = sugg[args.pick - 1]
     drop_id = s.drop.player_id if s.drop else None
     if s.kind == "WAIVER":
@@ -305,7 +326,7 @@ def cmd_waivers(cfg: AppConfig, args) -> int:
         payload = waiver_payload(lg.team_id, state.scoring_period, s.add.player_id, drop_id, bid=bid)
     else:
         payload = free_agent_payload(lg.team_id, state.scoring_period, s.add.player_id, drop_id)
-    summary_text = f"add {s.add.name}, drop {s.drop.name if s.drop else 'nobody'}, +{s.gain:.1f} ROS pts."
+    summary_text = f"add {s.add.name}, drop {s.drop.name if s.drop else 'nobody'}, +{s.gain:.1f} pts over 3 wks. " + "; ".join(s.why[:2])
     print()
     return _queue(cfg, lg, s.kind, summary_text, payload, checks_for_add_drop(s.add.player_id, drop_id), args)
 
@@ -414,7 +435,7 @@ def cmd_report(cfg: AppConfig, args) -> int:
         pr = _prefs(lg, state)
         res = optimize(state, prefs=pr)
         _snapshot(lg, state, res)
-        facts = insights.build_facts(lg.label, state, res, rank_free_agents(state, limit=3, prefs=pr))
+        facts = insights.build_facts(lg.label, state, res, rank_free_agents(state, limit=3, prefs=pr, cfg=cfg.waivers))
         text, used = insights.llm_note(facts) if args.llm else (insights.template_note(facts), False)
         print(text)
         if args.llm and not used:
@@ -473,7 +494,7 @@ def cmd_autopilot(cfg: AppConfig, args) -> int:
             queued = _queue_trade_ideas(cfg, lg, state, pr, args)
             if args.waivers:
                 existing = {_pending_signature(a.payload) for a in store.open_actions()}
-                for s in rank_free_agents(state, limit=2, prefs=pr):
+                for s in rank_free_agents(state, limit=2, prefs=pr, cfg=cfg.waivers):
                     drop_id = s.drop.player_id if s.drop else None
                     payload = (waiver_payload(lg.team_id, state.scoring_period, s.add.player_id, drop_id, bid=0)
                                if s.kind == "WAIVER" else
@@ -483,7 +504,7 @@ def cmd_autopilot(cfg: AppConfig, args) -> int:
                     check_own_team(payload, lg)
                     why = f" ({s.add.reasons[0]})" if s.add.reasons else ""
                     a = store.add(lg.name, s.kind, f"add {s.add.name}, drop {s.drop.name if s.drop else 'nobody'}, "
-                                  f"+{s.gain:.1f} ROS pts{why}.", payload, checks_for_add_drop(s.add.player_id, drop_id))
+                                  f"+{s.gain:.1f} pts over 3 wks{why}.", payload, checks_for_add_drop(s.add.player_id, drop_id))
                     queued += 1
                     if n:
                         n.send(notify.msg_pending(a))

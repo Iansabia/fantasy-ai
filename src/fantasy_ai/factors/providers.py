@@ -206,6 +206,7 @@ def build_context(state: LeagueState, raw_pro: dict, raw_ratings: dict | None = 
                   client: PoliteClient | None = None, online: bool = True) -> WeekContext:
     ctx = WeekContext(week=state.scoring_period)
     ctx.games = parse_pro_games(raw_pro, state.scoring_period)
+    ctx.future_games = {w: parse_pro_games(raw_pro, w) for w in range(state.scoring_period + 1, state.scoring_period + 3)}
     if ctx.games:
         ctx.sources.append("ESPN schedule")
     if raw_ratings:

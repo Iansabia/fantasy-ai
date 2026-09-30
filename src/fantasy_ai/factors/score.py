@@ -155,6 +155,17 @@ def score_factors(p: Player, ctx: WeekContext, cfg: dict) -> list[Factor]:
     return out
 
 
+def matchup_multiplier(position: str, opp: str, ctx: WeekContext, cfg: dict | None = None) -> float:
+    """Opponent points allowed to the position vs league average, capped. Used for future weeks."""
+    c = merged_config(cfg)["matchup"]
+    allowed = ctx.def_vs_pos.get((opp, position))
+    vals = [v for (t, pos), v in ctx.def_vs_pos.items() if pos == position]
+    if allowed is None or not vals:
+        return 1.0
+    mean = sum(vals) / len(vals)
+    return 1 + _clamp((allowed / mean - 1) * c["weight"], c["cap"]) if mean > 0 else 1.0
+
+
 def factor_product(factors: list[Factor], cfg: dict) -> float:
     lo, hi = cfg["total_cap"]
     prod = 1.0
@@ -180,6 +191,7 @@ def our_edge(state: LeagueState) -> float | None:
 def apply(state: LeagueState, ctx: WeekContext, user_cfg: dict | None = None) -> None:
     """Set score_multiplier / factors on every player (in place). Usage trend also moves ROS."""
     cfg = merged_config(user_cfg)
+    state.context = ctx
     if ctx.our_edge is None:
         ctx.our_edge = our_edge(state)
     everyone = [p for t in state.teams.values() for p in t.roster] + state.free_agents

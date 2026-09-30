@@ -13,7 +13,7 @@ import sqlite3
 from pathlib import Path
 
 from .config import AppConfig, ROOT
-from .notify import IMessageBackend, mask, parse_reply
+from .notify import IMessageBackend, mask, parse_reply, was_sent_by_bot
 from .chat import respond
 from .pending import PendingStore
 
@@ -107,7 +107,9 @@ def poll(cfg: AppConfig, store: PendingStore, backend=None, approve_fn=None,
     log = []
     for rowid, sender, text in rows:
         last = max(last, rowid)
-        if not text.strip() or _digits(sender) not in allowed:
+        if not text.strip() or was_sent_by_bot(text):   # skip echoes of the bot's own texts
+            continue
+        if _digits(sender) not in allowed:
             if parse_reply(text):
                 log.append("ignored command from unknown sender")
             continue

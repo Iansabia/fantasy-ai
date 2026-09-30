@@ -69,6 +69,7 @@ class AppConfig:
     notify: dict = field(default_factory=dict)   # {"backend": ..., "to": {owner: ENV_VAR_NAME}}
     factors: dict = field(default_factory=dict)  # weights/caps, see factors/score.py DEFAULTS
     pacing: dict = field(default_factory=dict)   # see pacing.py DEFAULTS
+    waivers: dict = field(default_factory=dict)  # see waivers.py DEFAULTS
 
     def get(self, name: str) -> LeagueConfig:
         for lg in self.leagues:
@@ -110,7 +111,8 @@ def _parse(data: dict, path: Path | None) -> AppConfig:
         trades_propose_only=True,
     )
     return AppConfig(leagues=leagues, settings=settings, source=path, notify=data.get("notify") or {},
-                     factors=data.get("factors") or {}, pacing=data.get("pacing") or {})
+                     factors=data.get("factors") or {}, pacing=data.get("pacing") or {},
+                     waivers=data.get("waivers") or {})
 
 
 def load_credentials(profile: str, env_file: str | Path | None = None) -> Credentials | None:

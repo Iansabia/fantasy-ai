@@ -114,11 +114,13 @@ def test_news_out_benches_even_if_espn_active():
 
 
 def test_buzz_raises_waiver_value(demo_state):
-    before = {w.add.name: w.add_value for w in rank_free_agents(demo_state)}
+    from fantasy_ai.waivers import evaluate_add
+    wonder = demo_state.find_player("Waiver Wonder")
+    before = evaluate_add(demo_state, wonder).add_value
     adjust.apply(demo_state, [], {901: Buzz(add_rank=1, add_count=50000)})
-    after = {w.add.name: w.add_value for w in rank_free_agents(demo_state)}
-    assert after["Waiver Wonder"] > before["Waiver Wonder"]
-    assert after["Waiver Wonder"] <= before["Waiver Wonder"] * (1 + adjust.BUZZ_CAP) + 0.2
+    w = evaluate_add(demo_state, wonder)
+    assert before < w.add_value <= before * (1 + adjust.BUZZ_CAP) + 0.2
+    assert any("most-added on Sleeper" in line for line in w.why)
 
 
 def test_enrich_end_to_end(tmp_path, demo_state):

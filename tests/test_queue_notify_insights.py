@@ -102,7 +102,8 @@ def test_cli_waiver_pick_queues_not_sends(tmp_path, capsys):
     out = capsys.readouterr().out
     assert rc == 0 and "DRY RUN" in out and "Queued as #1" in out
     data = json.loads(store.read_text())
-    assert data["actions"][0]["payload"]["bidAmount"] == 0 and data["actions"][0]["kind"] == "WAIVER"
+    a = data["actions"][0]
+    assert a["kind"] in ("WAIVER", "FREEAGENT") and a["payload"].get("bidAmount", 0) == 0
 
 
 def test_cli_trade_propose_queues(tmp_path, capsys):

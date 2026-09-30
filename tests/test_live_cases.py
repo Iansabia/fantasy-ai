@@ -161,8 +161,10 @@ def test_activation_with_full_roster_suggests_drop():
 
 def test_waivers_do_not_drop_ir_eligible_player_headed_to_ir():
     from fantasy_ai.waivers import rank_free_agents
-    s = make_state([b.entry(b.player(1, "Healthy RB", "RB", 8), 2),
-                    b.entry(b.player(2, "Jonah Coleman", "RB", 0.0, season=0, injury="INJURY_RESERVE"), 20)],
-                   fas=[b.fa_row(b.player(9, "Jaylen Wright", "RB", 7, season=150))])
-    drops = [w.drop.name for w in rank_free_agents(s)]
-    assert "Jonah Coleman" not in drops and drops == ["Healthy RB"]
+    e = [b.entry(b.player(1, "Q", "QB", 20), 0), b.entry(b.player(8, "D", "D/ST", 6), 16),
+         b.entry(b.player(9, "K", "K", 7), 17),
+         b.entry(b.player(2, "Jonah Coleman", "RB", 0.0, season=0, injury="INJURY_RESERVE"), 20)]
+    e += [b.entry(b.player(20 + i, f"W{i}", "WR", 10 + i), 20) for i in range(12)]
+    s = make_state(e, fas=[b.fa_row(b.player(90, "Jaylen Wright", "RB", 7, season=150))])
+    drops = [w.drop.name for w in rank_free_agents(s) if w.drop]
+    assert drops and "Jonah Coleman" not in drops
