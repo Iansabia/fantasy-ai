@@ -41,6 +41,13 @@ def _projection(stats: list[dict], year: int, split: int, period: int) -> float:
     return 0.0
 
 
+def _opt_round(x) -> float | None:
+    try:
+        return round(float(x), 1)
+    except (TypeError, ValueError):
+        return None
+
+
 def parse_player(entry: dict, year: int, week: int, pro_teams: dict[int, dict]) -> Player:
     """Parse a roster entry (teams[].roster.entries[]) or a free-agent row (players[])."""
     pool = entry.get("playerPoolEntry") or {}
@@ -64,6 +71,8 @@ def parse_player(entry: dict, year: int, week: int, pro_teams: dict[int, dict]) 
         on_team_id=int(pool.get("onTeamId", entry.get("onTeamId", 0)) or 0),
         status=entry.get("status", "ONTEAM"),
         percent_owned=round(float((p.get("ownership") or {}).get("percentOwned", 0.0)), 1),
+        percent_change=_opt_round((p.get("ownership") or {}).get("percentChange")),
+        percent_started=_opt_round((p.get("ownership") or {}).get("percentStarted")),
     )
 
 

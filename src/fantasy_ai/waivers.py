@@ -61,6 +61,12 @@ class WaiverSuggestion:
     why: list[str] = field(default_factory=list)
     lineup_gain: float = 0.0
     threshold: float = 0.0
+    considered: set[int] = field(default_factory=set)     # drops actually evaluated
+    rejected: dict[int, str] = field(default_factory=dict)  # drops ruled out for this add, with reason
+    next3_add: float = 0.0
+    next3_drop: float = 0.0
+    starts_add: int = 0                  # weeks in the horizon the add would start
+    starts_drop: int = 0                 # weeks the drop would have started
 
 
 def merged(cfg: dict | None) -> dict:
@@ -135,22 +141,47 @@ def _minimum_ok(roster_after: list[Player], state: LeagueState) -> bool:
     return all(pos.count(k) >= v for k, v in need.items())
 
 
-def droppable(state: LeagueState, prefs=None, cfg: dict | None = None, cache: dict | None = None) -> list[Player]:
+def drop_status(state: LeagueState, prefs=None, cfg: dict | None = None,
+                cache: dict | None = None) -> dict[int, str | None]:
+    """player_id -> None if droppable, else the exact reason he is protected.
+    Reasons: starter this week, locked, IR slot, IR-bound (open IR slot), never_drop (your rule),
+    roster minimum, bye coverage (week N)."""
     cfg = merged(cfg)
     cache = {} if cache is None else cache
+    H = cfg["horizon"]
+    active = [p for p in state.roster if not p.on_ir_slot]
     ir_room = state.slot_counts.get(IR, 0) - sum(1 for p in state.roster if p.on_ir_slot)
-    starters = _best([p for p in state.roster if not p.on_ir_slot], state, 0, cfg, cache)[2]
-    out = []
+    starters = _best(active, state, 0, cfg, cache)[2]
+    base = [_best(active, state, k, cfg, cache) for k in range(H)]
+    out: dict[int, str | None] = {}
     for p in state.roster:
-        if p.locked or p.on_ir_slot or (prefs is not None and prefs.keeps(p.name)):
-            continue
-        if p.ir_eligible() and ir_room > 0:
+        if p.on_ir_slot:
+            out[p.player_id] = "IR slot"
+        elif p.locked:
+            out[p.player_id] = "locked (game started)"
+        elif prefs is not None and prefs.keeps(p.name):
+            out[p.player_id] = "never_drop (your rule)"
+        elif p.ir_eligible() and ir_room > 0:
             ir_room -= 1
-            continue
-        if p.player_id in starters:
-            continue
-        out.append(p)
+            out[p.player_id] = "IR-bound (open IR slot)"
+        elif p.player_id in starters:
+            out[p.player_id] = "starter this week"
+        else:
+            after = [q for q in active if q.player_id != p.player_id]
+            if not _minimum_ok(after, state):
+                out[p.player_id] = f"roster minimum (last {p.position})"
+                continue
+            short = [k for k in range(H) if _best(after, state, k, cfg, cache)[1] < base[k][1]]
+            out[p.player_id] = f"bye coverage (week {state.scoring_period + short[0]})" if short else None
     return out
+
+
+def droppable(state: LeagueState, prefs=None, cfg: dict | None = None, cache: dict | None = None) -> list[Player]:
+    """Bench players with no protection reason. Roster-minimum / bye-coverage protections are
+    re-checked per add (an add at the same position can cover), see evaluate_add."""
+    st = drop_status(state, prefs, cfg, cache)
+    soft = ("roster minimum", "bye coverage")
+    return [p for p in state.roster if st[p.player_id] is None or str(st[p.player_id]).startswith(soft)]
 
 
 def _useful_depth(p: Player, roster: list[Player], state: LeagueState, cfg: dict) -> bool:
@@ -188,13 +219,21 @@ def evaluate_add(state: LeagueState, add: Player, prefs=None, cfg: dict | None =
     if len(active) < roster_limit:
         options.append(None)
     best = None
+    considered: set[int] = set()
+    rejected: dict[int, str] = {}
     for d in options:
         after = [p for p in active if d is None or p.player_id != d.player_id] + [add]
         if not _minimum_ok(after, state):
+            if d is not None:
+                rejected[d.player_id] = "roster minimum"
             continue
         weeks = [_best(after, state, k, cfg, cache) for k in range(H)]
         if any(w[1] < b[1] for w, b in zip(weeks, base)):
+            if d is not None:
+                rejected[d.player_id] = "bye coverage"
             continue                           # would leave a starting slot empty (bye coverage)
+        if d is not None:
+            considered.add(d.player_id)
         lineup = round(sum(w[0] - b[0] for w, b in zip(weeks, base)), 2)
         r_add, r_drop = ros(add, state, cfg), (ros(d, state, cfg) if d else 0.0)
         starts = sum(1 for w in weeks if add.player_id in w[2])
@@ -208,10 +247,13 @@ def evaluate_add(state: LeagueState, add: Player, prefs=None, cfg: dict | None =
         gain = round(cfg["next3_weight"] * lineup + cfg["ros_weight"] * ros_term, 1)
         # ties go to dropping the lower rest-of-season player
         if best is None or gain > best[0] or (gain == best[0] and r_drop < best[4]):
-            best = (gain, d, lineup, r_add, r_drop, starts, ros_term)
+            d_starts = sum(1 for b in base if d is not None and d.player_id in b[2])
+            best = (gain, d, lineup, r_add, r_drop, starts, ros_term, d_starts)
     if best is None:
         return None
-    gain, d, lineup, r_add, r_drop, starts, ros_term = best
+    gain, d, lineup, r_add, r_drop, starts, ros_term, d_starts = best
+    next3_add = round(sum(week_worth(add, state, k, cfg) for k in range(H)), 1)
+    next3_drop = round(sum(week_worth(d, state, k, cfg) for k in range(H)), 1) if d else 0.0
     claim = add.status == "WAIVERS"
     threshold = cfg["min_gain_waiver"] if (claim and cfg["rolling_priority"]) else cfg["min_gain_free_agent"]
 
@@ -242,15 +284,69 @@ def evaluate_add(state: LeagueState, add: Player, prefs=None, cfg: dict | None =
     reason = f"{add.name} ({add.position}, {'waivers' if claim else 'free agent'}): {drop_txt}, +{gain:.1f} pts over {H} wks."
     if claim and cfg["rolling_priority"]:
         reason += f" Costs waiver priority, so it needs +{threshold:.0f}."
+    from .ownership import own_note
+    note = own_note(add)
+    if note and len(lines) < 4:
+        lines.append(note)
+    if d is not None and r_drop > r_add and starts > 0 and d_starts == 0:
+        lines.append(f"{d.name} has more raw value but would not start; {add.name} fills a starting slot")
+    if d is not None and own_note(d) and "falling" in (own_note(d) or ""):
+        lines.append(f"{d.name}: {own_note(d)}")
     return WaiverSuggestion(add, d, r_add, r_drop, gain, "WAIVER" if claim else "FREEAGENT", reason,
-                            lines, lineup, threshold)
+                            lines, lineup, threshold, considered=considered, rejected=rejected,
+                            next3_add=next3_add, next3_drop=next3_drop, starts_add=starts, starts_drop=d_starts)
 
 
 # ---------------------------------------------------------------- ranking
 
+def check_suggestion(state: LeagueState, s: WaiverSuggestion, status: dict[int, str | None], cfg: dict) -> list[str]:
+    """Invariants. Any failure means the suggestion is not offered or queued."""
+    fails = []
+    by_id = {p.player_id: p for p in state.roster}
+    free = [pid for pid, why in status.items() if why is None or str(why).startswith(("roster minimum", "bye coverage"))]
+    for pid in free:
+        if pid not in s.considered and pid not in s.rejected:
+            fails.append(f"{by_id[pid].name} is droppable but was never evaluated for {s.add.name}")
+    if free:
+        low = min(free, key=lambda pid: ros(by_id[pid], state, cfg)
+                  + sum(week_worth(by_id[pid], state, k, cfg) for k in range(cfg["horizon"])))
+        if low not in s.considered and low not in s.rejected:
+            fails.append(f"lowest-value droppable player {by_id[low].name} was not a candidate")
+    if s.drop is not None:
+        why = status.get(s.drop.player_id)
+        if why is not None and not str(why).startswith(("roster minimum", "bye coverage")):
+            fails.append(f"{s.drop.name} is protected ({why}) but was suggested as a drop")
+        # Exception: the add starts for us and the drop would not start in any of the next weeks
+        # (e.g. an RB filling an empty RB slot vs a 12th WR). Team value, not raw value.
+        fills_need = s.starts_add > 0 and s.starts_drop == 0
+        if s.drop_value > s.add_value and s.next3_drop > s.next3_add and not fills_need:
+            fails.append(f"{s.drop.name} is worth more than {s.add.name} both rest of season "
+                         f"({s.drop_value:.0f} vs {s.add_value:.0f}) and over 3 weeks ({s.next3_drop:.1f} vs {s.next3_add:.1f})")
+    return fails
+
+
+def rank_with_checks(state: LeagueState, limit: int = 5, min_gain: float | None = None,
+                     prefs=None, cfg: dict | None = None) -> tuple[list[WaiverSuggestion], list[str]]:
+    """Like rank_free_agents, but also returns invariant failures ('waiver check failed: ...')."""
+    cfg = merged(cfg)
+    status = drop_status(state, prefs, cfg)
+    suggestions = rank_free_agents(state, limit=limit * 2, min_gain=min_gain, prefs=prefs, cfg=cfg, _checked=False)
+    ok, failures = [], []
+    for s in suggestions:
+        f = check_suggestion(state, s, status, cfg)
+        if f:
+            failures += [f"waiver check failed ({s.add.name}): {x}" for x in f]
+        else:
+            ok.append(s)
+    return ok[:limit], failures
+
+
 def rank_free_agents(state: LeagueState, limit: int = 5, min_gain: float | None = None,
-                     prefs=None, cfg: dict | None = None) -> list[WaiverSuggestion]:
-    """Best add/drop pairs above their thresholds, best first, each drop used once."""
+                     prefs=None, cfg: dict | None = None, _checked: bool = True) -> list[WaiverSuggestion]:
+    """Best add/drop pairs above their thresholds, best first, each drop used once.
+    Suggestions that fail an invariant check are removed (see rank_with_checks)."""
+    if _checked:
+        return rank_with_checks(state, limit, min_gain, prefs, cfg)[0]
     cfg = merged(cfg)
     if min_gain is not None:
         cfg["min_gain_free_agent"] = min_gain
@@ -305,3 +401,22 @@ def streamers(state: LeagueState, prefs=None, cfg: dict | None = None) -> list[W
         out.append(WaiverSuggestion(fa, drop, fa.lineup_value(wk), drop.lineup_value(wk), edge,
                                     "WAIVER" if claim else "FREEAGENT", reason, why, edge, cfg["stream_margin"]))
     return out
+
+
+def audit(state: LeagueState, prefs=None, cfg: dict | None = None) -> list[dict]:
+    """One row per rostered player: droppable yes/no + exact reason, ROS, 3-week worth, roster %."""
+    from .ownership import own_note
+    cfg = merged(cfg)
+    status = drop_status(state, prefs, cfg)
+    rows = []
+    for p in state.roster:
+        why = status[p.player_id]
+        rows.append({
+            "name": p.name, "pos": p.position, "slot": slot_name(p.lineup_slot),
+            "droppable": why is None, "reason": why or "",
+            "ros": ros(p, state, cfg),
+            "next3": round(sum(week_worth(p, state, k, cfg) for k in range(cfg["horizon"])), 1),
+            "owned": p.percent_owned, "trend": own_note(p) or "",
+        })
+    rows.sort(key=lambda r: (not r["droppable"], r["ros"] + r["next3"]))
+    return rows

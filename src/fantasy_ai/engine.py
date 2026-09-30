@@ -39,6 +39,12 @@ def prepare(state: LeagueState, reader, factor_cfg: dict | None = None, *, news:
         players = research if research is not None else lineup_research_set(state)
         enrich(state, llm or LLM(), client=client, players=players)
         info.update(news=True, news_players=len(players))
+    from . import ownership
+    try:
+        ownership.apply(state, ownership.record(state))
+        info["ownership"] = True
+    except OSError:
+        pass
     if factors:
         ctx = providers.build_context(state, reader.raw_pro_teams(),
                                       reader.raw_positional_ratings(state.scoring_period),

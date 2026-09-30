@@ -62,6 +62,17 @@ fai report demo
   slot empty in a bye week. Waiver claims cost rolling priority, so they need a bigger gain than a
   free-agent add. K and D/ST streamers are flagged by matchup and Vegas. Each idea shows its top
   reasons; tune it under `waivers:`.
+- **Waiver safety checks.** `fai waivers <league> --audit` lists every rostered player as droppable
+  or not, with the exact reason (starter, locked, IR slot, IR-bound, never_drop, roster minimum, bye
+  coverage). Every run also checks that each unprotected bench player was actually evaluated as a
+  drop, that the lowest-value one was a candidate, and that no suggestion drops someone worth more
+  than the add both rest-of-season and over 3 weeks (unless the add fills a starting slot the drop
+  never would). A failed check blocks the suggestion and prints or texts "waiver check failed".
+- **Roster % as a signal.** ESPN's percent rostered, weekly change and percent started are tracked in
+  `data/ownership_history.json` (6 weeks). A capped factor lifts risers and fades fallers in waiver
+  and trade value, reasons show "rostered 42% (+22% this week, +37% over 3 wks)", free agents spiking
+  are marked "likely claimed soon if you wait", and players the league is dropping are flagged.
+  Percent started adds a small consensus factor (at most 3%) to the weekly score.
 - **Trades:** raw value swap plus the change in each team's best starting lineup.
 - **News and buzz** (`src/fantasy_ai/news/`): ESPN player news, NBC/Rotoworld, RotoBaller and
   FantasyPros RSS, Reddit r/fantasyfootball, and Sleeper trending adds/drops. The LLM turns each

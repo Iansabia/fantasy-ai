@@ -24,6 +24,7 @@ DEFAULTS = {
     "usage": {"weight": 0.15, "cap": 0.08},
     "weather": {"wind_mph": 15.0, "rain_mm": 1.0, "pass_cap": 0.08, "kick_cap": 0.15},
     "ceiling": {"weight": 0.15, "cap": 0.04, "edge": 0.10},
+    "consensus": {"cap": 0.03},                          # ESPN percentStarted
     "total_cap": [0.70, 1.35],
 }
 VOLATILITY = {"WR": 1.0, "TE": 0.9, "D/ST": 0.8, "RB": 0.75, "QB": 0.6, "K": 0.5}
@@ -142,6 +143,12 @@ def score_factors(p: Player, ctx: WeekContext, cfg: dict) -> list[Factor]:
                 hit = min(hit, c["kick_cap"])
             if hit > 0:
                 out.append(Factor("weather", 1 - hit, f"weather at {game.home_team}: wind {wind:.0f} mph, rain {rain:.1f} mm/h"))
+
+    if p.percent_started is not None and p.position not in ("K", "D/ST"):
+        c = cfg["consensus"]
+        m = 1 + _clamp((p.percent_started - 50) / 50 * c["cap"], c["cap"])
+        if abs(m - 1) >= 0.01:
+            out.append(Factor("consensus", m, f"started in {p.percent_started:.0f}% of ESPN leagues"))
 
     if ctx.our_edge is not None:
         c = cfg["ceiling"]

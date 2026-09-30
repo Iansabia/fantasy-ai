@@ -24,6 +24,10 @@ class Player:
     on_team_id: int = 0
     status: str = "ONTEAM"        # ONTEAM / FREEAGENT / WAIVERS
     percent_owned: float = 0.0
+    percent_change: float | None = None       # ESPN ownership.percentChange (roster-% points)
+    percent_started: float | None = None      # ESPN ownership.percentStarted
+    own_week: float | None = None             # set by ownership.apply
+    own_3wk: float | None = None
     # set by news/adjust.py; decisions read proj_week / ros_value, so they pick these up
     base_proj_week: float | None = None      # ESPN projection before news adjustment
     ros_multiplier: float = 1.0              # role/sentiment/buzz effect on rest-of-season value

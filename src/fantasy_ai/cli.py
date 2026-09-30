@@ -297,7 +297,19 @@ def cmd_waivers(cfg: AppConfig, args) -> int:
     state = reader.load(free_agents=True)
     from .news.pipeline import players_to_research
     _prepare(cfg, state, reader, args, research=players_to_research(state))
-    sugg = rank_free_agents(state, limit=args.limit, prefs=_prefs(lg, state), cfg=cfg.waivers)
+    from .waivers import audit, rank_with_checks
+    pr = _prefs(lg, state)
+    sugg, failures = rank_with_checks(state, limit=args.limit, prefs=pr, cfg=cfg.waivers)
+    if args.audit:
+        print(f"{lg.label}: roster audit, week {state.scoring_period}")
+        print(f"  {'player':24} {'pos':4} {'slot':9} {'drop?':6} {'ROS':>6} {'3wk':>5} {'own%':>5}  reason / trend")
+        for r in audit(state, pr, cfg.waivers):
+            print(f"  {r['name']:24} {r['pos']:4} {r['slot']:9} {'yes' if r['droppable'] else 'no':6} "
+                  f"{r['ros']:6.1f} {r['next3']:5.1f} {r['owned']:5.0f}  {r['reason'] or '-'}"
+                  + (f" | {r['trend']}" if r['trend'] else ""))
+        print()
+    for f in failures:
+        print(f"WARNING: {f}")
     print(f"{lg.label}: waiver ideas, week {state.scoring_period} (approval required)")
     if not sugg:
         print("  No free agent improves your team by enough to matter (claims need more, they cost priority).")
@@ -493,8 +505,16 @@ def cmd_autopilot(cfg: AppConfig, args) -> int:
                 n.send(hurt)
             queued = _queue_trade_ideas(cfg, lg, state, pr, args)
             if args.waivers:
+                from .waivers import rank_with_checks
                 existing = {_pending_signature(a.payload) for a in store.open_actions()}
-                for s in rank_free_agents(state, limit=2, prefs=pr, cfg=cfg.waivers):
+                ideas, failures = rank_with_checks(state, limit=2, prefs=pr, cfg=cfg.waivers)
+                for f in failures:
+                    print(f"{lg.label}: {f}")
+                if failures:
+                    summary(f"league {i}: waiver check failed ({len(failures)})")
+                    if n:
+                        n.send(f"⚠️ {lg.label} | Waiver check failed\n\n" + "\n".join(f"• {f}" for f in failures[:5]))
+                for s in ideas:
                     drop_id = s.drop.player_id if s.drop else None
                     payload = (waiver_payload(lg.team_id, state.scoring_period, s.add.player_id, drop_id, bid=0)
                                if s.kind == "WAIVER" else
@@ -575,6 +595,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--limit", type=int, default=5)
     p.add_argument("--pick", type=int, help="queue suggestion N for approval")
     p.add_argument("--bid", type=int, default=0, help="FAAB bid (ignored in no-FAAB leagues)")
+    p.add_argument("--audit", action="store_true", help="show every player: droppable or why not")
     p.add_argument("--notify", action="store_true")
     evidence(p)
     p = sub.add_parser("trade", help="evaluate a trade")
