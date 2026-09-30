@@ -141,7 +141,7 @@ def profiles(state: LeagueState) -> dict[int, Profile]:
                 if p.is_out() or p.news_out:
                     desperate.append(f"{pos} {p.name} {p.game_status.lower()}")
         wins, losses = getattr(t, "wins", 0), getattr(t, "losses", 0)
-        out[tid] = Profile(tid, t.name, f"{wins}-{losses}", strength[tid], rank, holes, surplus, desperate)
+        out[tid] = Profile(tid, t.name.strip(), f"{wins}-{losses}", strength[tid], rank, holes, surplus, desperate)
     return out
 
 
