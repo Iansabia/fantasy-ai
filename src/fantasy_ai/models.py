@@ -7,6 +7,15 @@ from .slots import HEALTHY_STATUSES, IR, IR_ELIGIBLE_STATUSES, OUT_STATUSES, STA
 
 SEASON_WEEKS = 17  # fantasy regular season + playoffs, used for rest-of-season math
 
+# Per-game rest-of-season rate (see Player.per_game). Measured on 2026 week 4 ESPN data
+# (scripts/backtest_values): ESPN's season projection is a full 17-game total that moves only
+# ~0.3 points per point actually scored, so "(season - actual so far) / games left" is not a
+# real rest-of-season number. ESPN's weekly projection is the freshest view of a player's role
+# but runs hot (season / 17 is ~0.82x the weekly number) and carries this week's matchup.
+SEASON_GAMES = 17
+WEEKLY_TO_SEASON_RATE = 0.82   # puts the weekly projection on the season-rate scale
+WEEKLY_WEIGHT = 0.5            # blend: half fresh weekly view, half stable season rate
+
 
 @dataclass
 class Player:
@@ -79,10 +88,17 @@ class Player:
         return not self.on_bye(week) and not self.is_out() and not self.news_out
 
     def per_game(self) -> float:
-        """Season projection spread per game; falls back to this week's (unadjusted) projection."""
-        if self.proj_season > 0:
-            return self.proj_season / (SEASON_WEEKS - 1)  # 16 games + 1 bye in 17 weeks
-        return self.base_proj_week if self.base_proj_week is not None else self.proj_week
+        """Rest-of-season points per game: half ESPN's season rate (season total / 17 games),
+        half ESPN's current weekly projection scaled onto that rate. The weekly half is skipped
+        when there is no weekly number (bye, out), so a bye week never drags value down.
+        Falls back to the weekly projection when there is no season projection."""
+        weekly = self.base_proj_week if self.base_proj_week is not None else self.proj_week
+        if self.proj_season <= 0:
+            return weekly
+        season_rate = self.proj_season / SEASON_GAMES
+        if weekly > 0 and not self.is_out():
+            return WEEKLY_WEIGHT * WEEKLY_TO_SEASON_RATE * weekly + (1 - WEEKLY_WEIGHT) * season_rate
+        return season_rate
 
     def ros_value(self, current_week: int) -> float:
         """Rest-of-season projected points from the current week through week 17.
