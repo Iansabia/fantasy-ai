@@ -114,3 +114,23 @@ def test_fourth_qb_has_no_depth_value():
     s = make_state(e, fas=[b.fa_row(b.player(90, "Qb Four", "QB", 14, season=300))])
     w = evaluate_add(s, s.find_player("Qb Four"))
     assert w is None or w.gain < w.threshold
+
+
+def test_regression_drops_worthless_surplus_wr_not_useful_one():
+    """Live bug: two FLEX spots, 7 WRs. The bot dropped Sutton (ROS ~118) instead of Travis Hunter
+    (ROS ~9, 0.8/wk) because both were 'beyond useful depth' and tied at zero value."""
+    from fantasy_ai.waivers import evaluate_add
+    slots = {"0": 1, "2": 2, "4": 2, "6": 1, "16": 1, "17": 1, "20": 7, "21": 1, "23": 2}
+    e = [b.entry(b.player(1, "Qb", "QB", 20), 0), b.entry(b.player(2, "Rb1", "RB", 23), 2),
+         b.entry(b.player(3, "Rb2", "RB", 16), 2), b.entry(b.player(4, "Wr1", "WR", 13), 4),
+         b.entry(b.player(5, "Wr2", "WR", 13), 4), b.entry(b.player(6, "Flex1", "WR", 18), 23),
+         b.entry(b.player(7, "Flex2", "WR", 12), 23), b.entry(b.player(8, "Te", "TE", 8), 6),
+         b.entry(b.player(9, "Dst", "D/ST", 8), 16), b.entry(b.player(10, "Kk", "K", 10), 17),
+         b.entry(b.player(11, "Jameson Williams", "WR", 10.2), 20),
+         b.entry(b.player(12, "Courtland Sutton", "WR", 9.6, season=135), 20),
+         b.entry(b.player(13, "Travis Hunter", "WR", 0.8, season=10), 20),
+         b.entry(b.player(14, "Qb2", "QB", 19), 20), b.entry(b.player(15, "Qb3", "QB", 19), 20),
+         b.entry(b.player(16, "Rb3", "RB", 4.7), 20), b.entry(b.player(17, "Te2", "TE", 7), 20)]
+    s = make_state(e, slots=slots, fas=[b.fa_row(b.player(90, "Denzel Boston", "WR", 9, season=144), "WAIVERS")])
+    w = evaluate_add(s, s.find_player("Denzel Boston"))
+    assert w.drop.name == "Travis Hunter"

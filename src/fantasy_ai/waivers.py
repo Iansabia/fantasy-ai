@@ -12,7 +12,7 @@ Gain of "add A, drop D" (points over the next 3 weeks):
   next3_weight x [best starting lineup with A minus without, summed over 3 weeks, FLEX counts]
   + ros_weight x (ros(A) x start_share(A) - ros(D) x start_share(D)) x 3 / weeks_left
   start_share = share of the next 3 weeks he would start, at least 0.25 if he is useful depth
-  (within starters + 1 backup at his position, +1 with FLEX/superflex), else 0.
+  (within starters + 1 backup at his position, +1 with FLEX/superflex), else at least 0.05.
   Filling an open roster spot is judged on the lineup gain alone.
 Drops can be any bench player, not just the same position, but never: locked players, IR-slot
 players, IR-eligible players headed to an open IR slot, never_drop players, a move that breaks
@@ -45,6 +45,8 @@ DEFAULTS = {
 }
 MIN_GAIN = DEFAULTS["min_gain_free_agent"]
 DEPTH_SHARE = 0.25
+SURPLUS_SHARE = 0.05   # beyond useful depth still has some value (trades, injuries), so a 115-ROS
+                       # surplus WR is never treated as equal to a 9-ROS one
 
 
 @dataclass
@@ -198,13 +200,14 @@ def evaluate_add(state: LeagueState, add: Player, prefs=None, cfg: dict | None =
         starts = sum(1 for w in weeks if add.player_id in w[2])
         # ROS value counts by how often the player would start (depth floor 25%); filling an
         # open spot is judged on the lineup gain alone.
-        floor_add = DEPTH_SHARE if _useful_depth(add, after, state, cfg) else 0.0
-        floor_drop = DEPTH_SHARE if (d is not None and _useful_depth(d, active, state, cfg)) else 0.0
+        floor_add = DEPTH_SHARE if _useful_depth(add, after, state, cfg) else SURPLUS_SHARE
+        floor_drop = DEPTH_SHARE if (d is not None and _useful_depth(d, active, state, cfg)) else SURPLUS_SHARE
         share_add = max(floor_add, starts / H)
         share_drop = max(floor_drop, sum(1 for b in base if d is not None and d.player_id in b[2]) / H)
         ros_term = 0.0 if d is None else (r_add * share_add - r_drop * share_drop) * H / weeks_left
         gain = round(cfg["next3_weight"] * lineup + cfg["ros_weight"] * ros_term, 1)
-        if best is None or gain > best[0]:
+        # ties go to dropping the lower rest-of-season player
+        if best is None or gain > best[0] or (gain == best[0] and r_drop < best[4]):
             best = (gain, d, lineup, r_add, r_drop, starts, ros_term)
     if best is None:
         return None

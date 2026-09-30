@@ -257,6 +257,9 @@ def msg_lineup_changes(label: str, res: LineupResult, sent: bool = True) -> str:
         lines.append("")
         lines.append("IR:")
         lines += [_move_line(m) for m in ir]
+    lines.append("")
+    lines.append("✅ Already saved on ESPN. No reply needed." if sent
+                 else "Preview only, nothing changed on ESPN.")
     return "\n".join(lines)
 
 
