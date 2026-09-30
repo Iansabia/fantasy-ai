@@ -181,12 +181,13 @@ def plan_ir(state: LeagueState, roster: list[Player], res: LineupResult, prefs=N
     """Fill open IR slots with IR-eligible players, and activate IR-slot players who are no
     longer IR-eligible (ESPN treats them as an illegal IR stash). Activation needs a roster
     spot; if there is none, suggest a drop for the approval queue instead of acting."""
+    from .vorp import vorp_ros
     ir_cap = state.slot_counts.get(IR, 0)
     in_ir = [p for p in roster if p.lineup_slot == IR]
     roster_limit = sum(c for s, c in state.slot_counts.items() if s != IR)
     active_count = len(roster) - len(in_ir)
     to_ir = sorted([p for p in roster if p.lineup_slot != IR and p.ir_eligible() and not p.locked],
-                   key=lambda p: p.ros_value(state.scoring_period), reverse=True)
+                   key=lambda p: vorp_ros(p, state), reverse=True)
     stale = [p for p in in_ir if not p.ir_eligible() and not p.locked]
 
     def into_ir(p: Player) -> Move:
@@ -217,7 +218,7 @@ def plan_ir(state: LeagueState, roster: list[Player], res: LineupResult, prefs=N
             droppable = [q for q in roster if res.target.get(q.player_id) == BENCH and not q.locked
                          and q.player_id != p.player_id and not (prefs and prefs.keeps(q.name))]
             if droppable:
-                res.ir_drop = min(droppable, key=lambda q: q.ros_value(state.scoring_period))
+                res.ir_drop = min(droppable, key=lambda q: vorp_ros(q, state))   # cross-position: above replacement
                 res.ir_activate = p
                 res.warnings.append(f"{p.name} is healthy but stuck in the IR slot and the roster is full; "
                                     f"suggested drop {res.ir_drop.name} (needs approval).")

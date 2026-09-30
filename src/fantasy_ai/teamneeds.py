@@ -4,7 +4,8 @@ Value to a team = what its best lineups are worth, not the sum of its players:
   team_value(roster) = best lineup over the next 3 weeks (factor-adjusted worth, byes)
                      + best lineup by rest-of-season per-game value x remaining weeks
                      + small depth credit for the first backups (1 QB, 2 RB, 2 WR, 1 TE;
-                       +1 QB in superflex)
+                       +1 QB in superflex), counted ABOVE REPLACEMENT (vorp.py), so a backup QB
+                       in a 1-QB league adds ~nothing: any team can find a similar QB on waivers
 A trade's gain for a side is team_value(after) - team_value(before), computed on THAT team's
 roster, so surplus (a 3rd QB in a 1-QB league) is worth little to us and a lot to a team whose
 QB is hurt or on bye.
@@ -15,7 +16,8 @@ elsewhere but beyond their own need), short-term desperation (starters on bye / 
 
 Trade ideas: 1-for-1, 2-for-1 and 2-for-2 with every team, kept when our gain is clearly
 positive, their gain is not clearly negative, and market value (FantasyCalc, else our ROS) is
-close to fair. Ranked by our gain x acceptance (their gain + need match + fairness).
+close to fair (FantasyCalc; else our value above replacement). Ranked by our gain x acceptance
+(their gain + need match + fairness).
 Ideas are only ever queued for approval on request; nothing is proposed automatically.
 """
 from __future__ import annotations
@@ -27,6 +29,7 @@ from .lineup import best_assignment
 from .market import fc_value
 from .models import SEASON_WEEKS, LeagueState, Player
 from .slots import NON_STARTING
+from .vorp import vorp_pg, vorp_ros
 from .waivers import merged as waiver_cfg, week_worth
 
 POSITIONS = ("QB", "RB", "WR", "TE")
@@ -71,7 +74,8 @@ def team_value(roster: list[Player], state: LeagueState, cache: dict | None = No
     for pos, n in _backups(state).items():
         bench = sorted([p for p in active if p.position == pos and p.player_id not in starters],
                        key=season_value, reverse=True)[:n]
-        depth += sum(season_value(p) for p in bench) * DEPTH_CREDIT * max(1, SEASON_WEEKS - state.scoring_period + 1)
+        depth += sum(max(0.0, vorp_pg(p, state)) for p in bench) * DEPTH_CREDIT \
+            * max(1, SEASON_WEEKS - state.scoring_period + 1)
     v = round(near + far + depth, 1)
     cache[key] = v
     return v
@@ -126,6 +130,7 @@ def profiles(state: LeagueState) -> dict[int, Profile]:
         for pos in POSITIONS:
             bench = [p for p in tops[tid][pos] if p.player_id not in assign]
             surplus += [p for p in bench[backups[pos]:] if season_value(p) >= med[pos] * 0.8]
+        surplus.sort(key=lambda p: vorp_pg(p, state), reverse=True)     # most tradeable value first
         desperate = []
         for pos in POSITIONS:
             n = max(1, round(need[pos] + 0.49))
@@ -206,8 +211,8 @@ def _fair(give, get, state) -> tuple[float, float | None, float | None]:
     fg, ft = _market(give, state), _market(get, state)
     if fg and ft:
         return min(fg, ft) / max(fg, ft), fg, ft
-    wk = state.scoring_period
-    a, b = sum(p.ros_value(wk) for p in give), sum(p.ros_value(wk) for p in get)
+    a = sum(max(0.0, vorp_ros(p, state)) for p in give)
+    b = sum(max(0.0, vorp_ros(p, state)) for p in get)
     return (min(a, b) / max(a, b) if max(a, b) > 0 else 0.0), fg, ft
 
 
@@ -225,7 +230,7 @@ def trade_ideas(state: LeagueState, prefs=None, top: int = 8, min_gain: float = 
     def marginal_loss(p):   # how much we lose without him (cheap first pass)
         return base_me - team_value([q for q in me.roster if q.player_id != p.player_id], state, cache)
 
-    give_pool = sorted(mine, key=lambda p: (marginal_loss(p) - 0.02 * (fc_value(p) or p.ros_value(state.scoring_period))))[:pool]
+    give_pool = sorted(mine, key=lambda p: (marginal_loss(p) - 0.02 * (fc_value(p) or max(0.0, vorp_ros(p, state)))))[:pool]
     ideas: list[Idea] = []
     for tid, t in state.teams.items():
         if tid == state.my_team_id:
@@ -301,10 +306,20 @@ def _why_partner(pf: Profile, give, get, n) -> str:
 
 
 def _pitch(pf: Profile, give, get, their_gain, n) -> str:
+    """One or two clean sentences: the ask, then the reason it helps them."""
     g = " and ".join(p.name for p in give)
     r = " and ".join(p.name for p in get)
-    need = next((f"you're {pf.rank[p.position]} of {n} at {p.position}" for p in give if p.position in pf.holes), None)
+    ask = f"Hey {pf.name}, would you trade {r} for {g}?"
+    helps = their_gain > 1
+    hole = next((p for p in give if p.position in pf.holes), None)
     desp = next((d for p in give for d in pf.desperation if d.startswith(p.position)), None)
-    reason = need or (f"with {desp.split(' ', 1)[1]}" if desp else "it upgrades your starting lineup")
-    extra = " and it helps your lineup" if their_gain > 1 else ""
-    return f"Hey {pf.name}, {reason}. Would you do {g} for {r}?{extra}"
+    if hole is not None:
+        why = f"You're {pf.rank[hole.position]} of {n} at {hole.position}, so {hole.name} would start for you"
+    elif desp:
+        pos, rest = desp.split(" ", 1)
+        why = f"It covers {pos} for you with {rest}"
+    elif helps:
+        return f"{ask} It upgrades your starting lineup."
+    else:
+        return ask
+    return f"{ask} {why}{' and it upgrades your lineup' if helps else ''}."

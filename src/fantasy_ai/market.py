@@ -86,10 +86,12 @@ class Compare:
 
 
 def compare(state, top: int = 10) -> Compare:
-    wk = state.scoring_period
+    """Our rest-of-season value ABOVE REPLACEMENT (vorp.py) vs FC. Within a position this is the
+    same order as raw ROS; across positions it stops ranking backup QBs like starters."""
+    from .vorp import vorp_ros
     players = [p for p in [q for t in state.teams.values() for q in t.roster] + state.free_agents
                if fc_value(p) is not None and p.position not in ("K", "D/ST")]
-    ours = [p.ros_value(wk) for p in players]
+    ours = [vorp_ros(p, state) for p in players]
     fcs = [fc_value(p) for p in players]
     by_pos = {}
     for pos in ("QB", "RB", "WR", "TE"):
@@ -108,8 +110,8 @@ def reasons_for(p, state) -> str:
     from .factors.score import top_reasons
     bits = []
     h = getattr(p, "hype", None)
-    if h is not None and h.label != "Steady":
-        bits.append(h.label.lower())
+    if h is not None and h.label != "Steady" and abs(h.ros_mult - 1) >= 0.01:
+        bits.append(h.label.lower())            # labels that no longer move value are not a reason
     if not p.is_healthy():
         bits.append(p.game_status.lower())
     if p.bye_week and state.scoring_period <= p.bye_week <= state.scoring_period + 2:

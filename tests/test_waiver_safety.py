@@ -52,7 +52,7 @@ def test_invariant_blocks_dropping_a_better_player():
     s = friendly()
     sug = waivers.evaluate_add(s, s.find_player("Denzel Boston"))
     stafford = s.find_player("Matthew Stafford")
-    sug.drop, sug.drop_value, sug.next3_drop, sug.starts_drop = stafford, 999, 99, 1
+    sug.drop, sug.drop_value, sug.drop_vorp, sug.next3_drop, sug.starts_drop = stafford, 999, 999, 99, 1
     fails = waivers.check_suggestion(s, sug, waivers.drop_status(s), waivers.merged(None))
     assert any("worth more than" in f for f in fails)
 

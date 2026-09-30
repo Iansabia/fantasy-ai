@@ -10,7 +10,10 @@ Player value (per candidate):
 
 Gain of "add A, drop D" (points over the next 3 weeks):
   next3_weight x [best starting lineup with A minus without, summed over 3 weeks, FLEX counts]
-  + ros_weight x (ros(A) x start_share(A) - ros(D) x start_share(D)) x 3 / weeks_left
+  + ros_weight x (vorp(A) x start_share(A) - vorp(D) x start_share(D)) x 3 / weeks_left
+  vorp = ros minus a replacement-level player at his position over the same weeks, floored at 0
+  (vorp.py; replacement from the league's slots and team count), so a backup QB in a 1-QB league
+  is not protected by his big raw point total. K / D/ST count 0 here (streamers handle them).
   start_share = share of the next 3 weeks he would start, at least 0.25 if he is useful depth
   (within starters + 1 backup at his position, +1 with FLEX/superflex), else at least 0.05.
   Filling an open roster spot is judged on the lineup gain alone.
@@ -67,6 +70,8 @@ class WaiverSuggestion:
     next3_drop: float = 0.0
     starts_add: int = 0                  # weeks in the horizon the add would start
     starts_drop: int = 0                 # weeks the drop would have started
+    add_vorp: float | None = None        # rest-of-season value above replacement (cross-position)
+    drop_vorp: float | None = None
 
 
 def merged(cfg: dict | None) -> dict:
@@ -99,6 +104,15 @@ def ros(p: Player, state: LeagueState, cfg: dict) -> float:
     if _teammate_out(p, state):
         v *= 1 + cfg["handcuff_bump"] / 2
     return round(v, 1)
+
+
+def ros_vorp(p: Player, state: LeagueState, cfg: dict) -> float:
+    """ros() minus a replacement player at his position over the same weeks, floored at 0."""
+    from .vorp import POSITIONS, _weeks, replacement_levels
+    if p.position not in POSITIONS:
+        return 0.0
+    repl = replacement_levels(state)[p.position] * _weeks(p, state.scoring_period)
+    return round(max(0.0, ros(p, state, cfg) - repl), 1)
 
 
 def week_worth(p: Player, state: LeagueState, k: int, cfg: dict) -> float:
@@ -238,6 +252,7 @@ def evaluate_add(state: LeagueState, add: Player, prefs=None, cfg: dict | None =
             considered.add(d.player_id)
         lineup = round(sum(w[0] - b[0] for w, b in zip(weeks, base)), 2)
         r_add, r_drop = ros(add, state, cfg), (ros(d, state, cfg) if d else 0.0)
+        v_add, v_drop = ros_vorp(add, state, cfg), (ros_vorp(d, state, cfg) if d else 0.0)
         starts = sum(1 for w in weeks if add.player_id in w[2])
         # ROS value counts by how often the player would start (depth floor 25%); filling an
         # open spot is judged on the lineup gain alone.
@@ -245,15 +260,15 @@ def evaluate_add(state: LeagueState, add: Player, prefs=None, cfg: dict | None =
         floor_drop = DEPTH_SHARE if (d is not None and _useful_depth(d, active, state, cfg)) else SURPLUS_SHARE
         share_add = max(floor_add, starts / H)
         share_drop = max(floor_drop, sum(1 for b in base if d is not None and d.player_id in b[2]) / H)
-        ros_term = 0.0 if d is None else (r_add * share_add - r_drop * share_drop) * H / weeks_left
+        ros_term = 0.0 if d is None else (v_add * share_add - v_drop * share_drop) * H / weeks_left
         gain = round(cfg["next3_weight"] * lineup + cfg["ros_weight"] * ros_term, 1)
         # ties go to dropping the lower rest-of-season player
         if best is None or gain > best[0] or (gain == best[0] and r_drop < best[4]):
             d_starts = sum(1 for b in base if d is not None and d.player_id in b[2])
-            best = (gain, d, lineup, r_add, r_drop, starts, ros_term, d_starts)
+            best = (gain, d, lineup, r_add, r_drop, starts, ros_term, d_starts, v_add, v_drop)
     if best is None:
         return None
-    gain, d, lineup, r_add, r_drop, starts, ros_term, d_starts = best
+    gain, d, lineup, r_add, r_drop, starts, ros_term, d_starts, v_add, v_drop = best
     next3_add = round(sum(week_worth(add, state, k, cfg) for k in range(H)), 1)
     next3_drop = round(sum(week_worth(d, state, k, cfg) for k in range(H)), 1) if d else 0.0
     claim = add.status == "WAIVERS"
@@ -262,7 +277,8 @@ def evaluate_add(state: LeagueState, add: Player, prefs=None, cfg: dict | None =
     why: list[tuple[float, str]] = []
     if lineup:
         why.append((abs(lineup), f"lineup {lineup:+.1f} over next {H} wks (starts {starts} of {H})"))
-    why.append((abs(ros_term), f"rest of season {r_add:.0f} vs {r_drop:.0f}" if d else "fills an open roster spot"))
+    why.append((abs(ros_term), f"rest of season {r_add:.0f} vs {r_drop:.0f} ({v_add:.0f} vs {v_drop:.0f} above replacement)"
+                if d else "fills an open roster spot"))
     mate = _teammate_out(add, state)
     if mate:
         why.append((cfg["handcuff_bump"] * 10, f"handcuff: {mate.name} is {mate.injury_status if mate.is_out() else 'reported out'}"))
@@ -302,7 +318,8 @@ def evaluate_add(state: LeagueState, add: Player, prefs=None, cfg: dict | None =
         lines.append(f"{d.name}: {own_note(d)}")
     return WaiverSuggestion(add, d, r_add, r_drop, gain, "WAIVER" if claim else "FREEAGENT", reason,
                             lines, lineup, threshold, considered=considered, rejected=rejected,
-                            next3_add=next3_add, next3_drop=next3_drop, starts_add=starts, starts_drop=d_starts)
+                            next3_add=next3_add, next3_drop=next3_drop, starts_add=starts, starts_drop=d_starts,
+                            add_vorp=v_add, drop_vorp=v_drop if d else None)
 
 
 # ---------------------------------------------------------------- ranking
@@ -316,7 +333,7 @@ def check_suggestion(state: LeagueState, s: WaiverSuggestion, status: dict[int, 
         if pid not in s.considered and pid not in s.rejected:
             fails.append(f"{by_id[pid].name} is droppable but was never evaluated for {s.add.name}")
     if free:
-        low = min(free, key=lambda pid: ros(by_id[pid], state, cfg)
+        low = min(free, key=lambda pid: ros_vorp(by_id[pid], state, cfg)
                   + sum(week_worth(by_id[pid], state, k, cfg) for k in range(cfg["horizon"])))
         if low not in s.considered and low not in s.rejected:
             fails.append(f"lowest-value droppable player {by_id[low].name} was not a candidate")
@@ -326,10 +343,13 @@ def check_suggestion(state: LeagueState, s: WaiverSuggestion, status: dict[int, 
             fails.append(f"{s.drop.name} is protected ({why}) but was suggested as a drop")
         # Exception: the add starts for us and the drop would not start in any of the next weeks
         # (e.g. an RB filling an empty RB slot vs a 12th WR). Team value, not raw value.
+        # Rest of season is compared above replacement, so positions compare fairly.
         fills_need = s.starts_add > 0 and s.starts_drop == 0
-        if s.drop_value > s.add_value and s.next3_drop > s.next3_add and not fills_need:
-            fails.append(f"{s.drop.name} is worth more than {s.add.name} both rest of season "
-                         f"({s.drop_value:.0f} vs {s.add_value:.0f}) and over 3 weeks ({s.next3_drop:.1f} vs {s.next3_add:.1f})")
+        dv = s.drop_vorp if s.drop_vorp is not None else s.drop_value
+        av = s.add_vorp if s.add_vorp is not None else s.add_value
+        if dv > av and s.next3_drop > s.next3_add and not fills_need:
+            fails.append(f"{s.drop.name} is worth more than {s.add.name} both rest of season above replacement "
+                         f"({dv:.0f} vs {av:.0f}) and over 3 weeks ({s.next3_drop:.1f} vs {s.next3_add:.1f})")
     return fails
 
 
@@ -422,10 +442,10 @@ def audit(state: LeagueState, prefs=None, cfg: dict | None = None) -> list[dict]
         rows.append({
             "name": p.name, "pos": p.position, "slot": slot_name(p.lineup_slot),
             "droppable": why is None, "reason": why or "",
-            "ros": ros(p, state, cfg),
+            "ros": ros(p, state, cfg), "vorp": ros_vorp(p, state, cfg),
             "next3": round(sum(week_worth(p, state, k, cfg) for k in range(cfg["horizon"])), 1),
             "owned": p.percent_owned, "trend": own_note(p) or "",
             "hype": p.hype.label if getattr(p, "hype", None) is not None else "",
         })
-    rows.sort(key=lambda r: (not r["droppable"], r["ros"] + r["next3"]))
+    rows.sort(key=lambda r: (not r["droppable"], r["vorp"] + r["next3"]))
     return rows

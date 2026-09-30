@@ -370,7 +370,7 @@ def cmd_trade(cfg: AppConfig, args) -> int:
     fc = lambda ps: (f"{sum(fc_value(p) for p in ps):.0f}" if ps and all(fc_value(p) for p in ps) else "n/a")
     for side in (ev.me, ev.partner):
         print(f"  {side.team_name}: sends {', '.join(p.name for p in side.sends)}; "
-              f"gets {', '.join(p.name for p in side.receives)}; ROS value {side.ros_delta:+.1f}, "
+              f"gets {', '.join(p.name for p in side.receives)}; ROS value above replacement {side.ros_delta:+.1f}, "
               f"starting lineup {side.lineup_delta:+.1f} ({side.per_week:+.1f}/wk); "
               f"market (FantasyCalc) sends {fc(side.sends)} / gets {fc(side.receives)}")
     from .hype import line as hype_line

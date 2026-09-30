@@ -67,7 +67,7 @@ def test_trade_ideas_move_qb_surplus_to_team_with_qb_hole():
     assert top.partner == "Team B"
     assert any(p.position == "QB" for p in top.give) and any(p.position == "RB" for p in top.get)
     assert top.our_gain > 5 and top.their_gain > 0 and top.fairness >= 0.75
-    assert "Team B is 4 of 4 at QB" in top.why_partner and "you're 4 of 4 at QB" in top.pitch
+    assert "Team B is 4 of 4 at QB" in top.why_partner and "You're 4 of 4 at QB" in top.pitch
 
 
 def test_never_trade_is_respected():
@@ -95,3 +95,40 @@ def test_spearman_and_compare():
     c = market.compare(s, top=3)
     assert c.n > 10 and c.overall is not None and set(c.by_position) == {"QB", "RB", "WR", "TE"}
     assert len(c.ours_higher) <= 3 and len(c.fc_higher) <= 3
+
+
+# ---- value over replacement
+
+def test_replacement_levels_follow_league_slots():
+    from fantasy_ai import vorp
+    s = league()
+    n = vorp.starters_per_position(s)
+    assert n["QB"] == 4 and n["TE"] == 4 and n["RB"] + n["WR"] == 4 * 5      # 2 RB + 2 WR + 1 FLEX per team
+    lv = vorp.replacement_levels(s)
+    assert set(lv) == {"QB", "RB", "WR", "TE"}
+    s.slot_counts[23] = 2                                                     # a 2-FLEX league starts one more
+    n2 = vorp.starters_per_position(s)
+    assert n2["RB"] + n2["WR"] + n2["TE"] == n["RB"] + n["WR"] + n["TE"] + 4
+
+
+def test_backup_qb_is_not_a_top_asset_by_vorp():
+    from fantasy_ai import vorp
+    s = league()
+    goff, rb1 = s.find_player("Goff Qb"), s.find_player("B Rb1")
+    assert goff.ros_value(4) > rb1.ros_value(4)             # raw points say QB
+    assert vorp.vorp_ros(goff, s) < vorp.vorp_ros(rb1, s)   # above replacement says RB
+
+
+def test_spare_qb_depth_credit_counts_only_above_replacement():
+    from fantasy_ai import vorp
+    s = league()
+    tc, spare = s.teams[3], s.find_player("T4 Qb")          # same level as their starter: pure depth
+    gain = teamneeds.team_value(tc.roster + [spare], s) - teamneeds.team_value(tc.roster, s)
+    raw_credit = teamneeds.DEPTH_CREDIT * teamneeds.season_value(spare) * 14
+    assert 0 <= gain < 0.5 * raw_credit
+    assert abs(gain - teamneeds.DEPTH_CREDIT * vorp.vorp_pg(spare, s) * 14) < 1
+
+
+def test_pitch_is_clean_sentences():
+    for i in teamneeds.trade_ideas(league(), Prefs()):
+        assert "? and" not in i.pitch and i.pitch.count("?") == 1 and i.pitch.endswith((".", "?"))

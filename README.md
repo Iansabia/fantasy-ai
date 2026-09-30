@@ -74,9 +74,12 @@ fai report demo
   target share 8% -> 24%, WR/TE room was healthy, so the role change is real"). Usage comes from
   nflverse via `nflreadpy` (weekly stats, snap %, ffverse expected points, injury reports, last
   season), cached in `data/nflverse` for a week. A spike that lined up with a teammate's absence
-  is discounted if he is back; points far above expected volume read as "sell high". The label
-  moves rest-of-season value and future-week worth in waivers and trades (fill-ins lose credit once
-  the starter returns, hype-only players get little). Route participation and red-zone splits are
+  is discounted if he is back; points far above expected volume read as "sell high". Injury-limited
+  games (Q/D/O that week or listed the next week, with a snap collapse) are left out of the usage
+  windows. Multipliers live in one tuning block in `hype.py` (config `hype:` overrides): after the
+  week 1-3 backtest, Fading, Sell high and Role growing are text only (x1.0); Real breakout and Buy
+  low are +5%; Fill-in cuts future weeks (never below x0.92 for players who were already starters);
+  Hype only gets little. Route participation and red-zone splits are
   not used (not available free for the current season without full play-by-play).
 - **Roster % as a signal.** ESPN's percent rostered, weekly change and percent started are tracked in
   `data/ownership_history.json` (6 weeks). A capped factor lifts risers and fades fallers in waiver
@@ -93,8 +96,16 @@ fai report demo
   values, hype labels, why this partner, and a pitch line. `--propose N` queues one for approval.
 - **Scouting** (`fai scout <league>`): every team's rank at QB/RB/WR/TE, holes, surplus, short-term
   needs (starters on bye or out soon) and record, plus "best partner for our QB surplus".
+- **Value over replacement.** Anything that compares players across positions (trade fairness
+  fallback and depth credit, calc-compare ranking, waiver drop choice, IR drop, scouting surplus
+  order) uses rest-of-season value minus a replacement player at the position (`vorp.py`).
+  Replacement comes from the league: teams x starting slots, FLEX and superflex filled by the best
+  remaining eligible players, then the average of the next 3 at each position. Per-game value is
+  half ESPN's season rate (season total / 17) and half ESPN's weekly projection scaled onto that
+  rate (x0.82), because ESPN's season total is a full-season number that barely reacts to games
+  already played.
 - **Market check** (`fai calc-compare <league>`): Spearman rank correlation between our
-  rest-of-season values and FantasyCalc redraft values (overall and by position), and the biggest
+  rest-of-season values above replacement and FantasyCalc redraft values (overall and by position), and the biggest
   disagreements each way with our reasons. Below 0.6 prints a warning. FantasyCalc is a second
   opinion and a "market" column in trade output; it never replaces our decision value.
 - **Value tracker** (`fai track-values <league>`, `fai score-values <league>`): saves one snapshot
