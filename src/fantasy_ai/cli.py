@@ -364,10 +364,13 @@ def cmd_trade(cfg: AppConfig, args) -> int:
     except ValueError as e:
         raise SystemExit(str(e))
     print(f"{lg.label}: trade check, week {state.scoring_period}")
+    from .market import fc_value
+    fc = lambda ps: (f"{sum(fc_value(p) for p in ps):.0f}" if ps and all(fc_value(p) for p in ps) else "n/a")
     for side in (ev.me, ev.partner):
         print(f"  {side.team_name}: sends {', '.join(p.name for p in side.sends)}; "
               f"gets {', '.join(p.name for p in side.receives)}; ROS value {side.ros_delta:+.1f}, "
-              f"starting lineup {side.lineup_delta:+.1f} ({side.per_week:+.1f}/wk)")
+              f"starting lineup {side.lineup_delta:+.1f} ({side.per_week:+.1f}/wk); "
+              f"market (FantasyCalc) sends {fc(side.sends)} / gets {fc(side.receives)}")
     from .hype import line as hype_line
     for p in give + get:
         if hype_line(p):
@@ -402,6 +405,91 @@ def cmd_hype(cfg: AppConfig, args) -> int:
     show(f"{lg.label}: hype vs substance, week {state.scoring_period}\nOur roster:", sorted(state.roster, key=lambda p: -p.hype.substance))
     fas = sorted(state.free_agents, key=lambda p: -p.percent_owned)[: args.limit]
     show("\nTop free agents (by roster %):", fas)
+    return 0
+
+
+def cmd_scout(cfg: AppConfig, args) -> int:
+    from . import teamneeds
+    lg, reader, _ = _setup(cfg, args.league)
+    state = reader.load()
+    _prepare(cfg, state, reader, args, research=[])
+    prof = teamneeds.profiles(state)
+    n = len(state.teams)
+    me = prof[state.my_team_id]
+    print(f"{lg.label}: scouting, week {state.scoring_period}")
+    print("Our team:")
+    for line in teamneeds.strength_summary(me, n):
+        print(f"  {line}")
+    if me.surplus:
+        print("  our surplus: " + ", ".join(f"{p.name} ({p.position})" for p in me.surplus))
+    for line in teamneeds.surplus_matches(state, prof):
+        print(f"  {line}")
+    print("\nOther teams:")
+    for tid, pf in sorted(prof.items(), key=lambda x: x[1].name):
+        if tid != state.my_team_id:
+            print(f"  {teamneeds.describe(pf, n)}")
+    return 0
+
+
+def cmd_trade_ideas(cfg: AppConfig, args) -> int:
+    from . import teamneeds
+    from .hype import line as hype_line
+    lg, reader, _ = _setup(cfg, args.league)
+    state = reader.load()
+    _prepare(cfg, state, reader, args, research=[])
+    pr = _prefs(lg, state)
+    prof = teamneeds.profiles(state)
+    n = len(state.teams)
+    print(f"{lg.label}: trade ideas, week {state.scoring_period} (nothing is proposed without your approval)")
+    for line in teamneeds.strength_summary(prof[state.my_team_id], n):
+        print(f"  {line}")
+    ideas = teamneeds.trade_ideas(state, pr, top=args.limit)
+    if not ideas:
+        print("  No trade clearly helps us while staying fair and good for the other team.")
+        return 0
+    fmt = lambda v: f"{v:.0f}" if v else "n/a"
+    for i, idea in enumerate(ideas, 1):
+        print(f"\n  {i}. with {idea.partner}: give {', '.join(p.name for p in idea.give)} | "
+              f"get {', '.join(p.name for p in idea.get)}")
+        print(f"     our lineup {idea.our_gain:+.1f} pts ROS, theirs {idea.their_gain:+.1f}; market (FantasyCalc) "
+              f"{fmt(idea.fc_give)} for {fmt(idea.fc_get)}, fairness {idea.fairness:.0%}, acceptance {idea.accept:.0%}")
+        print(f"     why this partner: {idea.why_partner}")
+        for p in idea.give + idea.get:
+            if hype_line(p) and p.hype.label != "Steady":
+                print(f"     {hype_line(p)}")
+        print(f"     pitch: \"{idea.pitch}\"")
+    if args.propose:
+        if not 1 <= args.propose <= len(ideas):
+            raise SystemExit(f"--propose must be between 1 and {len(ideas)}")
+        idea = ideas[args.propose - 1]
+        g, r = [p.player_id for p in idea.give], [p.player_id for p in idea.get]
+        payload = trade_proposal_payload(lg.team_id, idea.partner_id, state.scoring_period, g, r)
+        text = (f"give {', '.join(p.name for p in idea.give)} get {', '.join(p.name for p in idea.get)} "
+                f"({idea.partner}), lineup {idea.our_gain:+.1f} ROS. Pitch: {idea.pitch}")
+        print()
+        return _queue(cfg, lg, "TRADE_PROPOSAL", text, payload, checks_for_trade(g, r, idea.partner_id), args)
+    print("\nRe-run with --propose N to queue one for your approval (fai approve sends it).")
+    return 0
+
+
+def cmd_calc_compare(cfg: AppConfig, args) -> int:
+    from . import market
+    lg, reader, _ = _setup(cfg, args.league)
+    state = reader.load(free_agents=True)
+    info = _prepare(cfg, state, reader, args, research=[])
+    if not info.get("market"):
+        print("FantasyCalc values unavailable (offline or API change).")
+        return 1
+    c = market.compare(state, top=args.limit)
+    print(f"{lg.label}: our rest-of-season value vs FantasyCalc market value ({c.n} players matched)")
+    print(f"  Spearman rank correlation: overall {c.overall}; " +
+          ", ".join(f"{k} {v}" for k, v in c.by_position.items()))
+    if c.overall is not None and c.overall < market.LOW_CORRELATION:
+        print(f"  WARNING: correlation below {market.LOW_CORRELATION}; investigate our values before trusting trade math.")
+    for title, rows in (("We value higher than the market", c.ours_higher), ("Market values higher than us", c.fc_higher)):
+        print(f"\n  {title}:")
+        for p, ro, rf in rows:
+            print(f"    {p.name:24} {p.position:3} our rank {ro:3d}, FC rank {rf:3d}  ({market.reasons_for(p, state)})")
     return 0
 
 
@@ -636,6 +724,19 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("league")
     p.add_argument("--limit", type=int, default=15)
     evidence(p)
+    p = sub.add_parser("scout", help="profile every team: strengths, holes, surplus, short-term needs")
+    p.add_argument("league")
+    evidence(p)
+    p = sub.add_parser("trade-ideas", help="team-need trade ideas (queued only with --propose N)")
+    p.add_argument("league")
+    p.add_argument("--limit", type=int, default=6)
+    p.add_argument("--propose", type=int, help="queue idea N for approval")
+    p.add_argument("--notify", action="store_true")
+    evidence(p)
+    p = sub.add_parser("calc-compare", help="compare our values with FantasyCalc market values")
+    p.add_argument("league")
+    p.add_argument("--limit", type=int, default=10)
+    evidence(p)
     sub.add_parser("pending", help="list queued actions")
     p = sub.add_parser("approve", help="re-check and send a queued action")
     p.add_argument("id")
@@ -667,7 +768,8 @@ def main(argv: list[str] | None = None) -> int:
     SUMMARY.clear()
     _PACER = None
     handler = {"leagues": cmd_leagues, "lineup": cmd_lineup, "explain": cmd_explain, "waivers": cmd_waivers,
-               "trade": cmd_trade, "hype": cmd_hype, "pending": cmd_pending, "approve": cmd_approve,
+               "trade": cmd_trade, "hype": cmd_hype, "scout": cmd_scout, "trade-ideas": cmd_trade_ideas,
+               "calc-compare": cmd_calc_compare, "pending": cmd_pending, "approve": cmd_approve,
                "reject": cmd_reject, "report": cmd_report, "autopilot": cmd_autopilot,
                "poll-telegram": cmd_poll_telegram, "poll-imessage": cmd_poll_imessage, "state": cmd_state}[args.cmd]
     if not quiet:

@@ -131,7 +131,9 @@ def parse_league(raw_league: dict, raw_pro: dict, my_team_id: int,
         roster = [parse_player(e, year, week, pro_teams) for e in (t.get("roster") or {}).get("entries", [])]
         for p in roster:
             p.on_team_id = int(t["id"])
-        teams[int(t["id"])] = Team(team_id=int(t["id"]), name=_team_name(t), roster=roster)
+        rec = (t.get("record") or {}).get("overall") or {}
+        teams[int(t["id"])] = Team(team_id=int(t["id"]), name=_team_name(t), roster=roster,
+                                   wins=int(rec.get("wins", 0) or 0), losses=int(rec.get("losses", 0) or 0))
     if my_team_id not in teams:
         raise ValueError(f"team_id {my_team_id} not found in league {raw_league.get('id')}")
     names = {tid: tm.name for tid, tm in teams.items()}

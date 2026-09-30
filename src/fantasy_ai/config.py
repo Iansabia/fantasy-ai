@@ -31,6 +31,7 @@ class LeagueConfig:
     fixture: str | None = None      # offline mode: path to a fixture dir, relative to repo root
     display_name: str = ""
     faab: bool = False              # False = waiver priority; claims send bidAmount 0
+    ppr: float = 1.0                # scoring for the FantasyCalc market benchmark
 
     @property
     def label(self) -> str:
@@ -101,6 +102,7 @@ def _parse(data: dict, path: Path | None) -> AppConfig:
             fixture=l.get("fixture"),
             display_name=str(l.get("display_name", "")),
             faab=bool(l.get("faab", False)),
+            ppr=float(l.get("ppr", 1.0)),
         )
         for l in data.get("leagues", [])
     ]

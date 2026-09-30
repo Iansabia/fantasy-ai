@@ -29,6 +29,9 @@ class Player:
     own_week: float | None = None             # set by ownership.apply
     own_3wk: float | None = None
     hype: object | None = None                # hype.HypeResult (substance vs hype label)
+    market_value: float | None = None         # FantasyCalc redraft value (market.py)
+    market_rank: int | None = None
+    market_trend: int | None = None
     # set by news/adjust.py; decisions read proj_week / ros_value, so they pick these up
     base_proj_week: float | None = None      # ESPN projection before news adjustment
     ros_multiplier: float = 1.0              # role/sentiment/buzz effect on rest-of-season value
@@ -101,6 +104,8 @@ class Team:
     team_id: int
     name: str
     roster: list[Player] = field(default_factory=list)
+    wins: int = 0
+    losses: int = 0
 
 
 @dataclass

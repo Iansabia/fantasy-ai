@@ -24,7 +24,7 @@ SUFFIX = {"jr", "sr", "ii", "iii", "iv", "v"}
 
 
 def norm_name(name: str) -> str:
-    toks = re.sub(r"[^a-z ]", "", (name or "").lower().replace(".", "").replace("'", "")).split()
+    toks = re.sub(r"[^a-z0-9 ]", "", (name or "").lower().replace(".", "").replace("'", "")).split()
     return " ".join(t for t in toks if t not in SUFFIX)
 
 

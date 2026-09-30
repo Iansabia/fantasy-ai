@@ -45,6 +45,7 @@ class Prefs:
     force_start: set[str] = field(default_factory=set)   # normalized names
     force_bench: set[str] = field(default_factory=set)
     never_drop: set[str] = field(default_factory=set)
+    never_trade: set[str] = field(default_factory=set)
     asked_this_week: set[str] = field(default_factory=set)   # start/bench_this_week (for wording)
 
     def starts(self, name: str) -> bool:
@@ -55,6 +56,9 @@ class Prefs:
 
     def keeps(self, name: str) -> bool:
         return _norm(name) in self.never_drop
+
+    def no_trade(self, name: str) -> bool:
+        return _norm(name) in self.never_trade
 
 
 def _league_block(prefs: dict, *labels: str) -> dict:
@@ -76,6 +80,7 @@ def load_prefs(week: int, *labels: str, directory: Path | None = None) -> Prefs:
         force_start=(start_wk | (always - bench_wk)),
         force_bench=(bench_wk | (never - start_wk)),
         never_drop={_norm(n) for n in block.get("never_drop", [])},
+        never_trade={_norm(n) for n in block.get("never_trade", [])},
         asked_this_week=start_wk | bench_wk,
     )
 
@@ -123,7 +128,7 @@ def trade_ideas(state, player, prefs: Prefs, limit: int = 2):
     mine = {p.player_id for p in state.roster}
     options = []
     if player.player_id in mine:
-        if prefs.keeps(player.name):
+        if prefs.keeps(player.name) or prefs.no_trade(player.name):
             return []
         for t in state.teams.values():
             if t.team_id == state.my_team_id:
@@ -136,7 +141,7 @@ def trade_ideas(state, player, prefs: Prefs, limit: int = 2):
                     options.append(([player], [q], ev))
     else:
         for g in state.roster:
-            if g.on_ir_slot or prefs.keeps(g.name):
+            if g.on_ir_slot or prefs.keeps(g.name) or prefs.no_trade(g.name):
                 continue
             ev = evaluate_trade(state, [g], [player])
             if ev.me.lineup_delta > FAIR_BAND and ev.partner.lineup_delta >= -FAIR_BAND:

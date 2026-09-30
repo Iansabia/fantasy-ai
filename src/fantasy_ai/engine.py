@@ -46,6 +46,12 @@ def prepare(state: LeagueState, reader, factor_cfg: dict | None = None, *, news:
         info["ownership"] = True
     except OSError:
         pass
+    if not offline:
+        from . import market
+        from .news.cache import PoliteClient
+        rows = market.fetch(client or PoliteClient(), len(state.teams),
+                            2 if state.slot_counts.get(7) else 1, getattr(reader.cfg, "ppr", 1.0))
+        info["market"] = market.attach(state, rows)
     from . import hype, usage_data
     usage = None if offline else usage_data.load(state.year)
     hype.apply(state, usage, hype_cfg)
