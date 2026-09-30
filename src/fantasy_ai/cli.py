@@ -6,6 +6,8 @@
   fai waivers <league> [--pick N] [--bid B] [--notify]       (--pick queues an approval)
   fai trade <league> --give X --get Y [--propose] [--notify]  (--propose queues an approval)
   fai pending | fai approve <id> | fai reject <id>
+  fai track-values <league> [--force]                 (weekly snapshot: our values vs FantasyCalc)
+  fai score-values <league> [--horizon N]             (score saved snapshots against real points)
   fai report [league] [--llm] [--notify]
   fai autopilot [--send] [--waivers] [--jitter] [--notify]
   fai poll-telegram
@@ -493,6 +495,46 @@ def cmd_calc_compare(cfg: AppConfig, args) -> int:
     return 0
 
 
+def cmd_track_values(cfg: AppConfig, args) -> int:
+    from . import value_track
+    lg, reader, _ = _setup(cfg, args.league)
+    state = reader.load(free_agents=True)
+    info = _prepare(cfg, state, reader, args, research=[])
+    if not info.get("market"):
+        print("Note: FantasyCalc values unavailable; snapshot saved without market values.")
+    snap = value_track.snapshot(state, lg.name)
+    path, written = value_track.save(snap, force=args.force)
+    n_fc = sum(1 for r in snap["players"] if r["fc"] is not None)
+    if written:
+        print(f"{lg.label}: saved week {snap['week']} snapshot ({len(snap['players'])} players, {n_fc} with FC value) to {path}")
+    else:
+        print(f"{lg.label}: week {snap['week']} snapshot already exists ({path}); use --force to replace it")
+    summary(f"track-values: week {snap['week']} {'saved' if written else 'kept'}")
+    return 0
+
+
+def cmd_score_values(cfg: AppConfig, args) -> int:
+    from . import usage_data, value_track
+    lg = cfg.get(args.league)
+    snaps = value_track.load_all(lg.name, lg.year)
+    if not snaps:
+        print(f"No snapshots for {lg.label} yet. Run `fai track-values {lg.name}` before each week's games.")
+        return 1
+    usage = usage_data.load(lg.year)
+    if usage is None:
+        print("nflverse data unavailable (offline or nflreadpy missing); cannot score.")
+        return 1
+    actuals = value_track.actuals_from_usage(usage)
+    scores = [s for s in (value_track.score_snapshot(sn, actuals, horizon=args.horizon) for sn in snaps) if s]
+    if not scores:
+        print(f"Snapshots exist (weeks {', '.join(str(s['week']) for s in snaps)}) but no games have been played since.")
+        return 0
+    print(f"{lg.label}: our values vs FantasyCalc, scored on real PPR points (nflverse)")
+    for line in value_track.format_scores(scores):
+        print(line)
+    return 0
+
+
 def cmd_pending(cfg: AppConfig, args) -> int:
     acts = _store(args).open_actions()
     if not acts:
@@ -626,6 +668,12 @@ def cmd_autopilot(cfg: AppConfig, args) -> int:
             pr = _prefs(lg, state)
             res = optimize(state, prefs=pr)
             _snapshot(lg, state, res)
+            if full and not lg.fixture_dir:
+                try:                            # forward test of our values vs FantasyCalc (never fatal)
+                    from . import value_track
+                    value_track.save(value_track.snapshot(state, lg.name))
+                except Exception as e:
+                    print(f"{lg.label}: value snapshot skipped ({type(e).__name__})")
             send = bool(args.send and cfg.settings.auto_lineup)
             rc, status = _apply_lineup(cfg, lg, writer, state, res, send, args)
             rc_all = rc_all or rc
@@ -781,6 +829,13 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("league")
     p.add_argument("--limit", type=int, default=10)
     evidence(p)
+    p = sub.add_parser("track-values", help="save this week's snapshot of our values vs FantasyCalc")
+    p.add_argument("league")
+    p.add_argument("--force", action="store_true", help="replace this week's snapshot if it exists")
+    evidence(p)
+    p = sub.add_parser("score-values", help="score saved value snapshots against real PPR points")
+    p.add_argument("league")
+    p.add_argument("--horizon", type=int, help="score only the first N weeks after each snapshot")
     sub.add_parser("pending", help="list queued actions")
     p = sub.add_parser("approve", help="re-check and send a queued action")
     p.add_argument("id")
@@ -816,7 +871,8 @@ def main(argv: list[str] | None = None) -> int:
     _PACER = None
     handler = {"leagues": cmd_leagues, "lineup": cmd_lineup, "explain": cmd_explain, "waivers": cmd_waivers,
                "trade": cmd_trade, "hype": cmd_hype, "scout": cmd_scout, "trade-ideas": cmd_trade_ideas,
-               "calc-compare": cmd_calc_compare, "pending": cmd_pending, "approve": cmd_approve,
+               "calc-compare": cmd_calc_compare,
+               "track-values": cmd_track_values, "score-values": cmd_score_values, "pending": cmd_pending, "approve": cmd_approve,
                "reject": cmd_reject, "report": cmd_report, "autopilot": cmd_autopilot,
                "poll-telegram": cmd_poll_telegram, "status": cmd_status, "poll-imessage": cmd_poll_imessage, "state": cmd_state}[args.cmd]
     if not quiet:
