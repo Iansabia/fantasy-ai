@@ -97,6 +97,12 @@ fai report demo
   rest-of-season values and FantasyCalc redraft values (overall and by position), and the biggest
   disagreements each way with our reasons. Below 0.6 prints a warning. FantasyCalc is a second
   opinion and a "market" column in trade output; it never replaces our decision value.
+- **Value tracker** (`fai track-values <league>`, `fai score-values <league>`): saves one snapshot
+  per week to `data/value_history/` (our ROS value, the same value with the hype multiplier backed
+  out, ESPN per-game projection, FantasyCalc value). Autopilot full runs save it automatically; the
+  first snapshot of a week is kept unless `--force`. `score-values` scores every snapshot against
+  PPR points scored since (nflverse): Spearman and top-K hit rate by position, and a disagreement
+  test (for pairs where two rankings disagree, who was right). `--horizon N` limits the weeks.
 - **News and buzz** (`src/fantasy_ai/news/`): ESPN player news, NBC/Rotoworld, RotoBaller and
   FantasyPros RSS, Reddit r/fantasyfootball, and Sleeper trending adds/drops. The LLM turns each
   item into a small JSON label (status, role change, sentiment, confidence). Plain code turns
