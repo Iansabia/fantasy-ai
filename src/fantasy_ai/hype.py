@@ -23,11 +23,24 @@ from dataclasses import dataclass, field
 
 from .usage_data import UsageData, norm_name, nfl_team
 
-MULTS = {   # label -> (ros multiplier, future-week multiplier)
-    "Real breakout": (1.15, 1.15), "Role growing": (1.08, 1.08), "Fill-in": (0.85, 0.60),
-    "Hype only": (0.90, 0.95), "Buy low": (1.05, 1.05), "Sell high": (0.93, 0.95),
-    "Steady": (1.0, 1.0), "Fading": (0.90, 0.92),
+# ---- tuning block: label -> (ros multiplier, future-week multiplier) ---------------------
+# Retune from `fai score-values` results (or override per install with config `hype:`).
+# 2026 weeks 1-3 backtest: when a label flipped a pair of players, Fading was right 29-35% of
+# the time, Sell high 25%, Role growing 28-48%, so they no longer move value (labels stay as
+# text). Real breakout / Buy low were closer to even, so they keep a small +5%.
+MULTS = {
+    "Real breakout": (1.05, 1.05), "Role growing": (1.0, 1.0), "Fill-in": (0.85, 0.60),
+    "Hype only": (0.90, 0.95), "Buy low": (1.05, 1.05), "Sell high": (1.0, 1.0),
+    "Steady": (1.0, 1.0), "Fading": (1.0, 1.0),
 }
+FILL_IN_FLOOR = 0.92            # fill-in cut stops here for players who were already starters
+STARTER_PPG = {"RB": 12.0, "WR": 12.0, "TE": 9.0}   # ~RB2/WR2/TE1 PPR points per game
+# Injury-limited games are left out of the usage windows: a Q/D/O game status that week or any
+# listing on the next week's report (hurt during the game), and snaps under INJURY_SNAP_MAX or under INJURY_SNAP_RATIO x his usual snap share.
+INJURY_SNAP_MAX = 0.40
+INJURY_SNAP_RATIO = 0.75
+GAME_STATUSES = {"QUESTIONABLE", "DOUBTFUL", "OUT"}
+# -----------------------------------------------------------------------------------------
 RECEIVERS, BACKS = ("WR", "TE"), ("RB",)
 BACK_STATUSES = {"ACTIVE", "NORMAL", "QUESTIONABLE", "PROBABLE", "DAY_TO_DAY", ""}
 
@@ -93,6 +106,39 @@ def _vacated(p, games_recent: list[dict], usage: UsageData, primary: str, state)
     return best[0], best[1], status
 
 
+def injury_filtered(games: list[dict], name: str, usage: UsageData | None) -> tuple[list[dict], list[int]]:
+    """Drop injury-limited games (game status Q/D/O that week, or listed on the report the next week,
+    with snaps under INJURY_SNAP_MAX or under INJURY_SNAP_RATIO x his median snap share in his
+    other games). A stinger on the first drive is not a role change. Returns (kept, dropped weeks)."""
+    if not usage or not games:
+        return games, []
+    def listed(g):   # game status that week (Q/D/O), or any listing the next week (hurt in the game)
+        now = usage.injuries.get((g["team"], g["week"]), {}).get(name, "")
+        return now in GAME_STATUSES or name in usage.injuries.get((g["team"], g["week"] + 1), {})
+    kept, hurt = [], []
+    for g in games:
+        snap = g.get("snap_pct")
+        others = sorted(o["snap_pct"] for o in games if o is not g and o.get("snap_pct") is not None)
+        usual = others[len(others) // 2] if others else None
+        low = snap is not None and (snap < INJURY_SNAP_MAX or (usual is not None and snap < INJURY_SNAP_RATIO * usual))
+        if low and listed(g):
+            hurt.append(g["week"])
+        else:
+            kept.append(g)
+    return kept, hurt
+
+
+def _was_starter(p, base_games: list[dict], usage: UsageData | None) -> bool:
+    """Starter-level before the fill-in window: last season's points per game while this season
+    has fewer than 3 earlier games (1-2 games are too noisy), else this season's earlier games."""
+    last = usage.last_season.get(norm_name(p.name)) if usage else None
+    if len(base_games) >= 3 or not last:
+        ppg = _mean([g["fpts"] for g in base_games]) if base_games else None
+    else:
+        ppg = last["ppg"]
+    return ppg is not None and ppg >= STARTER_PPG.get(p.position, 99)
+
+
 def compute(p, usage: UsageData | None, state) -> HypeResult:
     wk = state.scoring_period
     own_w = getattr(p, "own_week", None) or 0.0
@@ -107,10 +153,12 @@ def compute(p, usage: UsageData | None, state) -> HypeResult:
             break
 
     rows = (usage.weekly.get(norm_name(p.name), []) if usage else [])
-    games = [r for r in rows if r["week"] < wk]
+    games, hurt_weeks = injury_filtered([r for r in rows if r["week"] < wk], norm_name(p.name), usage)
     if p.position not in RECEIVERS + BACKS or not games:
         label = "Fading" if own_3 <= -15 else ("Hype only" if hype >= 65 else "Steady")
         reasons = (["no usage data yet"] if p.position in RECEIVERS + BACKS else []) + hype_bits[:1]
+        if hurt_weeks and p.position in RECEIVERS + BACKS:
+            reasons = [f"only injury-limited games so far (week {', '.join(map(str, hurt_weeks))})"] + hype_bits[:1]
         ros, fut = MULTS[label]
         return HypeResult(40 if not games else 50, hype, label, reasons, ros, fut)
 
@@ -138,6 +186,8 @@ def compute(p, usage: UsageData | None, state) -> HypeResult:
     fpts_pg = _mean([g["fpts"] for g in games[-3:]])
 
     reasons: list[str] = []
+    if hurt_weeks:
+        reasons.append(f"left out injury-limited game{'s' if len(hurt_weeks) > 1 else ''}: week {', '.join(map(str, hurt_weeks))}")
     label_metric = "target share" if primary == "target_share" else "carry share"
     if base_v is not None and abs(jump) >= 0.03:
         reasons.append(f"{label_metric} {_pct(base_v)} -> {_pct(recent_v)} (last {len(recent)} vs {base_src})")
@@ -219,6 +269,9 @@ def compute(p, usage: UsageData | None, state) -> HypeResult:
     else:
         label_text = label
     ros, fut = MULTS[label]
+    if label == "Fill-in" and _was_starter(p, base_games, usage):
+        ros, fut = max(ros, FILL_IN_FLOOR), max(fut, FILL_IN_FLOOR)
+        reasons.append(f"was already a {p.position}{1 if p.position == 'TE' else 2} before the fill-in role, so the cut is capped")
     if label == "Hype only":
         reasons += hype_bits[:1]
     final = usage_reasons[:2] + reasons[:1] + usage_reasons[2:] + reasons[1:]

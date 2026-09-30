@@ -138,3 +138,54 @@ def test_bellcow_share_drop_is_not_fading_and_injured_is_not_buy_low():
     hurt = label(s, "Hurt Rb", u)
     assert hurt.label == "Steady" and any("injury" in r for r in hurt.reasons)
     assert label(s, "Falling Wr", u).label == "Fading"
+
+
+# ---- retuned multipliers, injury-limited games, fill-in floor
+
+def test_fading_sell_high_role_growing_no_longer_move_value():
+    for lab in ("Fading", "Sell high", "Role growing"):
+        assert hype.MULTS[lab] == (1.0, 1.0)
+    assert hype.MULTS["Real breakout"][0] <= 1.06 and hype.MULTS["Buy low"][0] <= 1.06
+    s = state_with(("Fader", "WR", 10, 1, "ACTIVE"))
+    u = UsageData(2026, {"fader": rows("AAA", "WR", [(1, 0.24, 0.9, 9, 14, 13), (2, 0.12, 0.6, 4, 6, 6), (3, 0.08, 0.5, 3, 4, 5)])})
+    before = s.find_player("Fader").ros_value(4)
+    hype.apply(s, u)
+    p = s.find_player("Fader")
+    assert p.hype.label == "Fading" and p.ros_value(4) == before
+
+
+def test_injury_limited_game_left_out_of_windows():
+    # stinger in week 2 (16% snaps, on the report the next week): not a role change
+    s = state_with(("Bell Back", "RB", 16, 1, "ACTIVE"))
+    u = UsageData(2026, {"bell back": rows("AAA", "RB", [(1, 0.60, 0.71, 2, 9, 11), (2, 0.12, 0.16, 1, 3, 5),
+                                                         (3, 0.79, 0.72, 1, 9, 15)])},
+                  injuries={("AAA", 3): {"bell back": ""}})
+    h = label(s, "Bell Back", u)
+    assert h.label != "Fading" and any("injury-limited" in r and "week 2" in r for r in h.reasons)
+    kept, hurt = hype.injury_filtered(u.weekly["bell back"], "bell back", u)
+    assert hurt == [2] and [g["week"] for g in kept] == [1, 3]
+
+
+def test_low_snaps_without_injury_listing_still_count():
+    u = UsageData(2026, {"benched": rows("AAA", "RB", [(1, 0.6, 0.7, 1, 9, 9), (2, 0.2, 0.3, 1, 2, 3)])})
+    kept, hurt = hype.injury_filtered(u.weekly["benched"], "benched", u)
+    assert hurt == [] and len(kept) == 2
+
+
+def test_fill_in_cut_capped_for_established_starter():
+    s = state_with(("Vet Wr", "WR", 14, 1, "ACTIVE"), ("Star Wr", "WR", 16, 1, "QUESTIONABLE"))
+    u = UsageData(2026, {
+        "vet wr": rows("AAA", "WR", [(1, 0.18, 0.55, 6, 6, 8), (2, 0.33, 0.65, 10, 39, 21), (3, 0.27, 0.83, 13, 21, 21)]),
+        "star wr": rows("AAA", "WR", [(1, 0.28, 0.92, 10, 12, 16)])},
+        last_season={"vet wr": {"target_share": 0.2, "wopr": 0.4, "carries_pg": 0, "ppg": 15.9}},
+        injuries={("AAA", 2): {"star wr": "OUT"}, ("AAA", 3): {"star wr": "OUT"}})
+    h = label(s, "Vet Wr", u)
+    assert h.label.startswith("Fill-in") and h.ros_mult == hype.FILL_IN_FLOOR and h.future_mult == hype.FILL_IN_FLOOR
+
+
+def test_practice_listing_same_week_is_not_an_injury_game():
+    # listed with no game status the same week (e.g. back from last week's knock), then benched
+    u = UsageData(2026, {"rook": rows("SSS", "RB", [(1, 0.45, 0.48, 1, 8, 8), (2, 0.40, 0.46, 1, 7, 8), (3, 0.28, 0.28, 1, 1, 6)])},
+                  injuries={("SSS", 3): {"rook": ""}})
+    kept, hurt = hype.injury_filtered(u.weekly["rook"], "rook", u)
+    assert 3 not in hurt
