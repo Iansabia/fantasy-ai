@@ -90,10 +90,16 @@ fai report demo
 - **Team-need trade ideas** (`fai trade-ideas <league>`): value to a team is what its best lineups are
   worth (next 3 weeks + rest of season + a small credit for first backups), computed on each team's
   own roster. So a 3rd QB in a 1-QB league is worth little to you and a lot to a team whose QB is
-  weak or on bye. It searches 1-for-1, 2-for-1 and 2-for-2 deals with every team, keeps ones where
-  your lineup clearly gains, theirs does not clearly lose, and market value is close to fair, and
-  ranks them by your gain times acceptance odds. Each idea shows both lineup gains, FantasyCalc
-  values, hype labels, why this partner, and a pitch line. `--propose N` queues one for approval.
+  weak or on bye. For each target (1 or 2 of their players) it searches give packages of 1-3 of
+  ours and keeps the cheapest that works: players who cost our lineup little (backups the incoming
+  player makes redundant) at a market price close to even (no penalty at 90-105% of FantasyCalc,
+  never 20%+ over). Default rule: their starting lineup must gain at least +3 ROS, one player they
+  get must fill a weak position of theirs (scouting hole or a starter out / on bye), and we still
+  win (our gain beats theirs, or even market value with a clear +10 for us).
+  `--include-lopsided` also shows one-sided ideas; a hard sell then shows a "sweetened" version and
+  its extra market cost. Each idea prints every player's FC value, the market overpay/underpay in
+  points and %, what each give costs our lineup, both lineup changes, hype labels, why this partner,
+  and a pitch that leads with what the trade fixes for them. `--propose N` queues one for approval.
 - **Scouting** (`fai scout <league>`): every team's rank at QB/RB/WR/TE, holes, surplus, short-term
   needs (starters on bye or out soon) and record, plus "best partner for our QB surplus".
 - **Value over replacement.** Anything that compares players across positions (trade fairness

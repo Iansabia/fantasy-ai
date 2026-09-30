@@ -200,6 +200,36 @@ class Idea:
     score: float
     why_partner: str
     pitch: str
+    give_cost: dict[int, float] = field(default_factory=dict)   # lineup points each give costs us (get included)
+    price: float = 1.0                  # 1.0 inside the fair band, lower when we overpay / underpay a lot
+    sweetened: "Idea | None" = None     # easier-to-accept version when this one is a hard sell
+
+    @property
+    def overpay(self) -> float | None:
+        """Market points we give beyond what we get (negative = we underpay)."""
+        return round(self.fc_give - self.fc_get, 0) if self.fc_give and self.fc_get else None
+
+    @property
+    def overpay_pct(self) -> float | None:
+        return round(self.fc_give / self.fc_get - 1, 3) if self.fc_give and self.fc_get else None
+
+    @property
+    def hard_sell(self) -> bool:
+        return self.their_gain < -HARD_SELL
+
+
+# Package search tuning. We want the cheapest package that still works: players who cost our
+# lineup little (backups the incoming player makes redundant) at a market price close to even.
+FAIR_BAND = (0.90, 1.05)      # give/get market ratio with no price penalty
+OVERPAY_PENALTY = 1.5         # score x (1 - 1.5 x overpay beyond 5%): 20% over -> x0.78, 35% over -> x0.55
+UNDERPAY_PENALTY = 0.75       # lowballing is less bad for us, but hurts acceptance
+HARD_SELL = 3.0               # partner's lineup loses more than this -> "hard sell"
+CLEAR_EDGE = 10.0             # ROS lineup points that count as a clear win for us on an even-market deal
+MIN_THEIR_GAIN = 3.0          # partner's lineup must gain a meaningful amount (Ian: "+3 ROS or more")
+MAX_OVERPAY = 1.20            # default view never pays 20%+ over market (lopsided view may)
+MAX_THEIR_LOSS = 20.0         # never suggest trades that gut the partner's lineup
+MAX_GIVE = 3
+PER_TARGET = 20               # packages per target evaluated in full (best by quick cost first)
 
 
 def _market(ps: list[Player], state) -> float | None:
@@ -207,17 +237,47 @@ def _market(ps: list[Player], state) -> float | None:
     return sum(vals) if all(v is not None for v in vals) and vals else None
 
 
-def _fair(give, get, state) -> tuple[float, float | None, float | None]:
+def _ratio(give, get, state) -> tuple[float, float | None, float | None]:
+    """give/get market ratio (FantasyCalc; else our value above replacement), with the FC sums."""
     fg, ft = _market(give, state), _market(get, state)
     if fg and ft:
-        return min(fg, ft) / max(fg, ft), fg, ft
+        return fg / ft, fg, ft
     a = sum(max(0.0, vorp_ros(p, state)) for p in give)
     b = sum(max(0.0, vorp_ros(p, state)) for p in get)
-    return (min(a, b) / max(a, b) if max(a, b) > 0 else 0.0), fg, ft
+    return (a / b if b > 0 else 0.0), fg, ft
+
+
+def _fair(give, get, state) -> tuple[float, float | None, float | None]:
+    r, fg, ft = _ratio(give, get, state)
+    return (min(r, 1 / r) if r > 0 else 0.0), fg, ft
+
+
+def price_factor(ratio: float) -> float:
+    lo, hi = FAIR_BAND
+    return max(0.0, 1 - OVERPAY_PENALTY * max(0.0, ratio - hi) - UNDERPAY_PENALTY * max(0.0, lo - ratio))
+
+
+def wins_both_ways(our_gain: float, their_gain: float, ratio: float, pf: "Profile", give, min_gain: float) -> bool:
+    """Default rule (Ian): the partner's starting lineup must improve and one of the players they
+    get must fill a weak position of theirs (scouting hole or a starter out / on bye soon), while
+    we still win: our gain clears min_gain and beats theirs, or market value is about even (90-110%)
+    and our gain is a clear edge on its own (CLEAR_EDGE ROS points)."""
+    helps_them = their_gain >= MIN_THEIR_GAIN
+    fills_need = any(p.position in pf.holes or any(d.startswith(p.position) for d in pf.desperation) for p in give)
+    we_win = our_gain >= min_gain and (our_gain > their_gain
+                                       or (FAIR_BAND[0] <= ratio <= 1.10 and our_gain >= CLEAR_EDGE))
+    return helps_them and fills_need and we_win
 
 
 def trade_ideas(state: LeagueState, prefs=None, top: int = 8, min_gain: float = 5.0,
-                max_their_loss: float = 3.0, min_fair: float = 0.75, pool: int = 5) -> list[Idea]:
+                max_their_loss: float = HARD_SELL, min_fair: float = 0.75, pool: int = 5,
+                include_lopsided: bool = False) -> list[Idea]:
+    """For each target (1 or 2 of their players), search give packages of 1-3 of ours and keep
+    the cheapest that works: score = our gain x price (market ratio near even) x acceptance.
+    Default: only trades that improve the partner's lineup at a position they need while we
+    still win (wins_both_ways). include_lopsided also keeps trades that hurt them (hard sells) or
+    miss their needs; a hard sell then carries the best easier package as `sweetened`, so the
+    extra market cost is visible."""
     cache: dict = {}
     prof = profiles(state)
     me = state.my_team
@@ -226,12 +286,7 @@ def trade_ideas(state: LeagueState, prefs=None, top: int = 8, min_gain: float = 
     protected = (lambda p: prefs is not None and (prefs.keeps(p.name) or prefs.no_trade(p.name)))
     mine = [p for p in me.roster if not p.on_ir_slot and not p.locked and not protected(p)
             and p.position in POSITIONS]
-
-    def marginal_loss(p):   # how much we lose without him (cheap first pass)
-        return base_me - team_value([q for q in me.roster if q.player_id != p.player_id], state, cache)
-
-    give_pool = sorted(mine, key=lambda p: (marginal_loss(p) - 0.02 * (fc_value(p) or max(0.0, vorp_ros(p, state)))))[:pool]
-    ideas: list[Idea] = []
+    groups: list[list[Idea]] = []
     for tid, t in state.teams.items():
         if tid == state.my_team_id:
             continue
@@ -243,41 +298,62 @@ def trade_ideas(state: LeagueState, prefs=None, top: int = 8, min_gain: float = 
             return team_value(me.roster + [p], state, cache) - base_me
 
         get_pool = sorted(theirs, key=our_add, reverse=True)[:pool]
-        packages = [([g], [r]) for g in give_pool for r in get_pool]
-        packages += [(list(g2), [r]) for g2 in itertools.combinations(give_pool, 2) for r in get_pool]
-        packages += [(list(g2), list(r2)) for g2 in itertools.combinations(give_pool, 2)
-                     for r2 in itertools.combinations(get_pool, 2)]
-        for give, get in packages:
-            g_ids, r_ids = {p.player_id for p in give}, {p.player_id for p in get}
-            ours_after = [p for p in me.roster if p.player_id not in g_ids] + get
-            theirs_after = [p for p in t.roster if p.player_id not in r_ids] + give
-            if len(ours_after) > len(me.roster) and _over_limit(ours_after, state):
-                continue       # 1-for-2 into a full roster would need a drop; keep ideas simple
-            our_gain = round(team_value(ours_after, state, cache) - base_me, 1)
-            if our_gain < min_gain:
-                continue
-            their_gain = round(team_value(theirs_after, state, cache) - base_them, 1)
-            if their_gain < -max_their_loss:
-                continue
-            fair, fg, ft = _fair(give, get, state)
-            if fair < min_fair:
-                continue
-            need_match = 1.0 if any(p.position in pf.holes or any(d.startswith(p.position) for d in pf.desperation)
-                                    for p in give) else 0.0
-            accept = round(0.4 * max(0.0, min(1.0, (their_gain + max_their_loss) / 15))
-                           + 0.3 * need_match + 0.3 * fair, 2)
-            score = round(our_gain * (0.3 + 0.7 * accept), 1)
-            why = _why_partner(pf, give, get, n)
-            ideas.append(Idea(tid, t.name, give, get, our_gain, their_gain, fg, ft, round(fair, 2),
-                              accept, score, why, _pitch(pf, give, get, their_gain, n)))
-    ideas.sort(key=lambda i: i.score, reverse=True)
-    out, used = [], set()
-    for i in ideas:                      # avoid near-duplicate ideas around the same players
-        key = (i.partner_id, frozenset(p.player_id for p in i.get))
-        if key in used:
-            continue
-        used.add(key)
-        out.append(i)
+        targets = [[r] for r in get_pool] + [list(r2) for r2 in itertools.combinations(get_pool, 2)]
+        for get in targets:
+            r_ids = {p.player_id for p in get}
+            with_get = me.roster + get
+            v_with = team_value(with_get, state, cache)
+            cost = {p.player_id: round(v_with - team_value([q for q in with_get if q.player_id != p.player_id],
+                                                           state, cache), 1) for p in mine}
+            quick = []
+            for k in range(1, MAX_GIVE + 1):
+                for give in itertools.combinations(mine, k):
+                    if len(get) - k > 0 and _over_limit(
+                            [p for p in me.roster if p not in give] + get, state):
+                        continue      # receiving more than we send into a full roster needs a drop
+                    ratio, fg, ft = _ratio(give, get, state)
+                    if ratio <= 0 or min(ratio, 1 / ratio) < min_fair:
+                        continue
+                    if not include_lopsided and ratio >= MAX_OVERPAY:
+                        continue
+                    est = sum(cost[p.player_id] for p in give)
+                    quick.append((est + 40 * (1 - price_factor(ratio)), give, ratio, fg, ft))
+            quick.sort(key=lambda x: x[0])
+            group = []
+            for _, give, ratio, fg, ft in quick[:PER_TARGET]:
+                g_ids = {p.player_id for p in give}
+                ours_after = [p for p in me.roster if p.player_id not in g_ids] + get
+                theirs_after = [p for p in t.roster if p.player_id not in r_ids] + list(give)
+                our_gain = round(team_value(ours_after, state, cache) - base_me, 1)
+                if our_gain < min_gain:
+                    continue
+                their_gain = round(team_value(theirs_after, state, cache) - base_them, 1)
+                if their_gain < -MAX_THEIR_LOSS:
+                    continue
+                if not include_lopsided and not wins_both_ways(our_gain, their_gain, ratio, pf, give, min_gain):
+                    continue
+                need_match = 1.0 if any(p.position in pf.holes or any(d.startswith(p.position) for d in pf.desperation)
+                                        for p in give) else 0.0
+                accept = round(0.4 * max(0.0, min(1.0, (their_gain + max_their_loss) / 15))
+                               + 0.3 * need_match + 0.3 * min(1.0, ratio), 2)
+                price = price_factor(ratio)
+                score = round(our_gain * price * (0.4 + 0.6 * accept), 1)
+                group.append(Idea(tid, t.name.strip(), list(give), get, our_gain, their_gain, fg, ft,
+                                  round(min(ratio, 1 / ratio), 2), accept, score, _why_partner(pf, give, get, n),
+                                  _pitch(pf, give, get, their_gain, n),
+                                  give_cost={p.player_id: cost[p.player_id] for p in give}, price=round(price, 2)))
+            if group:
+                groups.append(group)
+    out = []
+    for group in groups:
+        group.sort(key=lambda i: i.score, reverse=True)
+        best = group[0]
+        if best.hard_sell:
+            easier = [i for i in group if not i.hard_sell]
+            if easier:
+                best.sweetened = easier[0]
+        out.append(best)
+    out.sort(key=lambda i: i.score, reverse=True)
     return out[:top]
 
 
@@ -306,20 +382,22 @@ def _why_partner(pf: Profile, give, get, n) -> str:
 
 
 def _pitch(pf: Profile, give, get, their_gain, n) -> str:
-    """One or two clean sentences: the ask, then the reason it helps them."""
-    g = " and ".join(p.name for p in give)
-    r = " and ".join(p.name for p in get)
-    ask = f"Hey {pf.name}, would you trade {r} for {g}?"
-    helps = their_gain > 1
+    """Lead with what the trade fixes for them, then the ask. One or two sentences."""
+    g, r = _names(give), _names(get)
+    ask = f"Would you trade {r} for {g}?"
     hole = next((p for p in give if p.position in pf.holes), None)
-    desp = next((d for p in give for d in pf.desperation if d.startswith(p.position)), None)
+    desp = next(((p, d) for p in give for d in pf.desperation if d.startswith(p.position)), None)
     if hole is not None:
-        why = f"You're {pf.rank[hole.position]} of {n} at {hole.position}, so {hole.name} would start for you"
-    elif desp:
-        pos, rest = desp.split(" ", 1)
-        why = f"It covers {pos} for you with {rest}"
-    elif helps:
-        return f"{ask} It upgrades your starting lineup."
-    else:
-        return ask
-    return f"{ask} {why}{' and it upgrades your lineup' if helps else ''}."
+        return (f"Hey {pf.name}, you're {pf.rank[hole.position]} of {n} at {hole.position}, "
+                f"and {hole.name} would start for you. {ask}")
+    if desp is not None:
+        p, d = desp
+        return f"Hey {pf.name}, {p.name} covers {p.position} for you with {d.split(' ', 1)[1]}. {ask}"
+    if their_gain > 1:
+        return f"Hey {pf.name}, this upgrades your starting lineup. {ask}"
+    return f"Hey {pf.name}, {ask[0].lower()}{ask[1:]}"
+
+
+def _names(ps) -> str:
+    names = [p.name for p in ps]
+    return names[0] if len(names) == 1 else ", ".join(names[:-1]) + " and " + names[-1]

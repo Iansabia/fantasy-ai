@@ -67,7 +67,7 @@ def test_trade_ideas_move_qb_surplus_to_team_with_qb_hole():
     assert top.partner == "Team B"
     assert any(p.position == "QB" for p in top.give) and any(p.position == "RB" for p in top.get)
     assert top.our_gain > 5 and top.their_gain > 0 and top.fairness >= 0.75
-    assert "Team B is 4 of 4 at QB" in top.why_partner and "You're 4 of 4 at QB" in top.pitch
+    assert "Team B is 4 of 4 at QB" in top.why_partner and "you're 4 of 4 at QB" in top.pitch
 
 
 def test_never_trade_is_respected():
@@ -132,3 +132,73 @@ def test_spare_qb_depth_credit_counts_only_above_replacement():
 def test_pitch_is_clean_sentences():
     for i in teamneeds.trade_ideas(league(), Prefs()):
         assert "? and" not in i.pitch and i.pitch.count("?") == 1 and i.pitch.endswith((".", "?"))
+
+
+# ---- cheapest fair package, both teams must gain (Ian's rule)
+
+def kelce_league():
+    """Kelce case: our TE is weak and Goedert is a doubtful backup TE; Williams is a bench WR,
+    Stafford a spare QB. Bread-style partner is fine at WR, has Kelce plus a solid TE2."""
+    us = [e(1, "Dak Qb", "QB", 20, 0), e(2, "Stafford Qb", "QB", 18, 20), e(3, "Rb A", "RB", 18, 2),
+          e(4, "Rb B", "RB", 15, 2), e(5, "Wr A", "WR", 16, 4), e(6, "Wr B", "WR", 14, 4),
+          e(7, "Wr C", "WR", 13, 23), e(8, "Jameson Williams", "WR", 11, 20), e(9, "Loveland Te", "TE", 7, 6),
+          e(10, "Dallas Goedert", "TE", 5, 20), e(11, "Our D", "D/ST", 7, 16), e(12, "Our K", "K", 8, 17)]
+    them = [e(21, "Weak Qb", "QB", 13, 0, 2), e(22, "C Rb1", "RB", 15, 2, 2), e(23, "C Rb2", "RB", 12, 2, 2),
+            e(24, "C Wr1", "WR", 11, 4, 2), e(25, "C Wr2", "WR", 9, 4, 2), e(26, "C Wr3", "WR", 8, 23, 2),
+            e(27, "Travis Kelce", "TE", 13, 6, 2), e(28, "C Te2", "TE", 10, 20, 2),
+            e(29, "C D", "D/ST", 6, 16, 2), e(30, "C K", "K", 7, 17, 2)]
+    def balanced(t, base):
+        return [e(base + 1, f"T{t} Qb", "QB", 19, 0, t), e(base + 2, f"T{t} Rb1", "RB", 15, 2, t),
+                e(base + 3, f"T{t} Rb2", "RB", 13, 2, t), e(base + 4, f"T{t} Wr1", "WR", 15, 4, t),
+                e(base + 5, f"T{t} Wr2", "WR", 13, 4, t), e(base + 6, f"T{t} Wr3", "WR", 12, 23, t),
+                e(base + 7, f"T{t} Te", "TE", 9, 6, t), e(base + 8, f"T{t} D", "D/ST", 6, 16, t),
+                e(base + 9, f"T{t} K", "K", 7, 17, t)]
+    s = make_state(us, slots=SLOTS, extra_teams=[(2, "Bread", them), (3, "Team C", balanced(3, 40)),
+                                                 (4, "Team D", balanced(4, 60))])
+    fc = {"Travis Kelce": 1631, "Jameson Williams": 1236, "Stafford Qb": 979, "Dallas Goedert": 369,
+          "Dak Qb": 3000, "Loveland Te": 1100}
+    for t in s.teams.values():
+        for p in t.roster:
+            p.market_value = fc.get(p.name, 2500.0)
+    return s
+
+
+def _ids(ps):
+    return {p.name for p in ps}
+
+
+def test_default_ideas_help_both_lineups_and_hit_a_need():
+    for s in (league(), kelce_league()):
+        prof = teamneeds.profiles(s)
+        for i in teamneeds.trade_ideas(s, Prefs(), top=20):
+            assert i.their_gain >= teamneeds.MIN_THEIR_GAIN > 0 and i.our_gain > 0
+            assert i.our_gain > i.their_gain or (0.9 <= i.fc_give / i.fc_get <= 1.10
+                                                 and i.our_gain >= teamneeds.CLEAR_EDGE)
+            pf = prof[i.partner_id]
+            assert any(p.position in pf.holes or any(d.startswith(p.position) for d in pf.desperation) for p in i.give)
+            assert not i.hard_sell
+
+
+def test_kelce_case_williams_goedert_not_suggested_because_it_hurts_them():
+    s = kelce_league()
+    kelce = [i for i in teamneeds.trade_ideas(s, Prefs(), top=50) if _ids(i.get) == {"Travis Kelce"}]
+    assert all(_ids(i.give) != {"Jameson Williams", "Dallas Goedert"} for i in kelce)
+    lop = [i for i in teamneeds.trade_ideas(s, Prefs(), top=50, include_lopsided=True)
+           if _ids(i.get) == {"Travis Kelce"}]
+    assert lop, "the one-sided view still finds a Kelce deal"
+
+
+def test_cheapest_package_preferred_when_both_work():
+    assert teamneeds.price_factor(1.0) == 1.0 and teamneeds.price_factor(0.95) == 1.0
+    assert teamneeds.price_factor(1.25) < 0.75 < teamneeds.price_factor(1.10)
+    s = league()
+    for i in teamneeds.trade_ideas(s, Prefs(), top=20):
+        assert i.fc_give / i.fc_get < teamneeds.MAX_OVERPAY   # never 20%+ over market by default
+        assert set(i.give_cost) == {p.player_id for p in i.give}
+
+
+def test_hard_sell_carries_sweetened_alternative():
+    s = kelce_league()
+    for i in teamneeds.trade_ideas(s, Prefs(), top=50, include_lopsided=True):
+        if i.hard_sell and i.sweetened is not None:
+            assert not i.sweetened.hard_sell and _ids(i.sweetened.get) == _ids(i.get)

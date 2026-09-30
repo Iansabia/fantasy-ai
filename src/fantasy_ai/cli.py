@@ -445,20 +445,41 @@ def cmd_trade_ideas(cfg: AppConfig, args) -> int:
     print(f"{lg.label}: trade ideas, week {state.scoring_period} (nothing is proposed without your approval)")
     for line in teamneeds.strength_summary(prof[state.my_team_id], n):
         print(f"  {line}")
-    ideas = teamneeds.trade_ideas(state, pr, top=args.limit)
+    ideas = teamneeds.trade_ideas(state, pr, top=args.limit, include_lopsided=args.include_lopsided)
     if not ideas:
-        print("  No trade clearly helps us while staying fair and good for the other team.")
+        print("  No trade helps both lineups at a position the other team needs while we still win."
+              + ("" if args.include_lopsided else " (--include-lopsided shows one-sided ideas too)"))
         return 0
-    fmt = lambda v: f"{v:.0f}" if v else "n/a"
+    byid = {p.player_id: p for t in state.teams.values() for p in t.roster}
+
+    def named(ps):
+        return ", ".join(f"{p.name} (FC {p.market_value:.0f})" if p.market_value else f"{p.name} (FC n/a)" for p in ps)
+
+    def market(idea):
+        if idea.overpay is None:
+            return f"market: FC value missing, fairness {idea.fairness:.0%} on our value above replacement"
+        word = "we overpay" if idea.overpay > 0 else "we underpay"
+        return (f"market: we give {idea.fc_give:.0f} for {idea.fc_get:.0f}, {word} {abs(idea.overpay):.0f} "
+                f"({idea.overpay_pct:+.1%})")
+
+    def costs(idea):
+        return ", ".join(f"{byid[pid].name} {c:.1f}" for pid, c in idea.give_cost.items())
+
     for i, idea in enumerate(ideas, 1):
-        print(f"\n  {i}. with {idea.partner}: give {', '.join(p.name for p in idea.give)} | "
-              f"get {', '.join(p.name for p in idea.get)}")
-        print(f"     our lineup {idea.our_gain:+.1f} pts ROS, theirs {idea.their_gain:+.1f}; market (FantasyCalc) "
-              f"{fmt(idea.fc_give)} for {fmt(idea.fc_get)}, fairness {idea.fairness:.0%}, acceptance {idea.accept:.0%}")
+        print(f"\n  {i}. with {idea.partner}: give {named(idea.give)} | get {named(idea.get)}")
+        print(f"     {market(idea)}")
+        tag = " (HARD SELL)" if idea.hard_sell else ""
+        print(f"     lineup ROS: ours {idea.our_gain:+.1f}, theirs {idea.their_gain:+.1f}{tag}; acceptance {idea.accept:.0%}")
+        print(f"     what each give costs our lineup: {costs(idea)}")
         print(f"     why this partner: {idea.why_partner}")
         for p in idea.give + idea.get:
             if hype_line(p) and p.hype.label != "Steady":
                 print(f"     {hype_line(p)}")
+        sw = idea.sweetened
+        if sw is not None:
+            extra = f"{sw.fc_give - idea.fc_give:+.0f} market points" if sw.fc_give and idea.fc_give else "n/a"
+            print(f"     sweetened (not a hard sell): give {named(sw.give)}; lineup ours {sw.our_gain:+.1f}, "
+                  f"theirs {sw.their_gain:+.1f}; {market(sw)}; costs {extra} more than the version above")
         print(f"     pitch: \"{idea.pitch}\"")
     if args.propose:
         if not 1 <= args.propose <= len(ideas):
@@ -823,6 +844,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("league")
     p.add_argument("--limit", type=int, default=6)
     p.add_argument("--propose", type=int, help="queue idea N for approval")
+    p.add_argument("--include-lopsided", action="store_true",
+                   help="also show trades that hurt the other team or miss their needs (hard sells)")
     p.add_argument("--notify", action="store_true")
     evidence(p)
     p = sub.add_parser("calc-compare", help="compare our values with FantasyCalc market values")
