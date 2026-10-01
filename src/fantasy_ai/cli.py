@@ -157,8 +157,8 @@ def _queue_trade_ideas(cfg: AppConfig, lg: LeagueConfig, state, prefs, args) -> 
         for give, get, ev in ideas:
             g_ids, r_ids = [p.player_id for p in give], [p.player_id for p in get]
             payload = trade_proposal_payload(lg.team_id, ev.partner.team_id, state.scoring_period, g_ids, r_ids)
-            text = (f"give {', '.join(p.name for p in give)} get {', '.join(p.name for p in get)} "
-                    f"({ev.partner.team_name}), {ev.me.per_week:+.1f} pts/wk.")
+            from .approval import trade_eval_text
+            text = trade_eval_text(state, give, get, ev)
             if _queue(cfg, lg, "TRADE_PROPOSAL", text, payload, checks_for_trade(g_ids, r_ids, ev.partner.team_id),
                       args, quiet_print=True) == 0:
                 queued += 1
@@ -384,6 +384,16 @@ def cmd_waivers(cfg: AppConfig, args) -> int:
             print(f"  - {s.reason}")
             for w in s.why:
                 print(f"       - {w}")
+    if getattr(args, "preview", None):
+        if not 1 <= args.preview <= len(sugg):
+            raise SystemExit(f"--preview must be between 1 and {len(sugg)}")
+        from .approval import waiver_text
+        from .pending import PendingAction
+        s = sugg[args.preview - 1]
+        print("\nText preview (not queued):\n")
+        print(notify.msg_pending(PendingAction(id="N", league=lg.label, kind=s.kind, summary=waiver_text(state, s),
+                                               payload={}, checks={}, created="", expires="")))
+        return 0
     if args.pick is None:
         if sugg:
             print("\nRe-run with --pick N to queue one for approval.")
@@ -397,9 +407,8 @@ def cmd_waivers(cfg: AppConfig, args) -> int:
         payload = waiver_payload(lg.team_id, state.scoring_period, s.add.player_id, drop_id, bid=bid)
     else:
         payload = free_agent_payload(lg.team_id, state.scoring_period, s.add.player_id, drop_id)
-    summary_text = (f"add {s.add.name}, drop {s.drop.name if s.drop else 'nobody'}, +{s.gain:.1f} pts over 3 wks. "
-                    + "; ".join(s.why[:2]) + ". "
-                    + _need_text(state, {x.position for x in (s.add, s.drop) if x is not None}))
+    from .approval import waiver_text
+    summary_text = waiver_text(state, s)
     print()
     return _queue(cfg, lg, s.kind, summary_text, payload, checks_for_add_drop(s.add.player_id, drop_id), args)
 
@@ -449,9 +458,8 @@ def cmd_trade(cfg: AppConfig, args) -> int:
         return 0
     give_ids, get_ids = [p.player_id for p in give], [p.player_id for p in get]
     payload = trade_proposal_payload(lg.team_id, ev.partner.team_id, state.scoring_period, give_ids, get_ids)
-    summary_text = (f"give {', '.join(p.name for p in give)} get {', '.join(p.name for p in get)} "
-                    f"({ev.partner.team_name}), {ev.me.per_week:+.1f} pts/wk. "
-                    + _need_text(state, {p.position for p in give + get}, ev.partner.team_id))
+    from .approval import trade_eval_text
+    summary_text = trade_eval_text(state, give, get, ev)
     print("\nTrades are proposed only after your approval, never accepted automatically.")
     return _queue(cfg, lg, "TRADE_PROPOSAL", summary_text, payload,
                   checks_for_trade(give_ids, get_ids, ev.partner.team_id), args)
@@ -562,15 +570,24 @@ def cmd_trade_ideas(cfg: AppConfig, args) -> int:
             print(f"     sweetened (not a hard sell): give {named(sw.give)}; lineup ours {sw.our_gain:+.1f}, "
                   f"theirs {sw.their_gain:+.1f}; {market(sw)}; costs {extra} more than the version above")
         print(f"     pitch: \"{idea.pitch}\"")
+    if getattr(args, "preview", None):
+        if not 1 <= args.preview <= len(ideas):
+            raise SystemExit(f"--preview must be between 1 and {len(ideas)}")
+        from .approval import trade_text
+        from .pending import PendingAction
+        print("\nText preview (not queued):\n")
+        print(notify.msg_pending(PendingAction(id="N", league=lg.label, kind="TRADE_PROPOSAL",
+                                               summary=trade_text(state, ideas[args.preview - 1]),
+                                               payload={}, checks={}, created="", expires="")))
+        return 0
     if args.propose:
         if not 1 <= args.propose <= len(ideas):
             raise SystemExit(f"--propose must be between 1 and {len(ideas)}")
         idea = ideas[args.propose - 1]
         g, r = [p.player_id for p in idea.give], [p.player_id for p in idea.get]
         payload = trade_proposal_payload(lg.team_id, idea.partner_id, state.scoring_period, g, r)
-        text = (f"give {', '.join(p.name for p in idea.give)} get {', '.join(p.name for p in idea.get)} "
-                f"({idea.partner}), lineup {idea.our_gain:+.1f} ROS. "
-                f"{_need_text(state, {p.position for p in idea.give + idea.get}, idea.partner_id)}. Pitch: {idea.pitch}")
+        from .approval import trade_text
+        text = trade_text(state, idea)
         print()
         return _queue(cfg, lg, "TRADE_PROPOSAL", text, payload, checks_for_trade(g, r, idea.partner_id), args)
     print("\nRe-run with --propose N to queue one for your approval (fai approve sends it).")
@@ -809,9 +826,8 @@ def cmd_autopilot(cfg: AppConfig, args) -> int:
                         continue
                     check_own_team(payload, lg)
                     why = f" ({s.add.reasons[0]})" if s.add.reasons else ""
-                    need = _need_text(state, {x.position for x in (s.add, s.drop) if x is not None})
-                    a = store.add(lg.name, s.kind, f"add {s.add.name}, drop {s.drop.name if s.drop else 'nobody'}, "
-                                  f"+{s.gain:.1f} pts over 3 wks{why}. {need}", payload,
+                    from .approval import waiver_text
+                    a = store.add(lg.name, s.kind, waiver_text(state, s), payload,
                                   checks_for_add_drop(s.add.player_id, drop_id))
                     queued += 1
                     if n:
@@ -906,6 +922,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("league")
     p.add_argument("--limit", type=int, default=5)
     p.add_argument("--pick", type=int, help="queue suggestion N for approval")
+    p.add_argument("--preview", type=int, help="print the approval text for suggestion N without queuing it")
     p.add_argument("--bid", type=int, default=0, help="FAAB bid (ignored in no-FAAB leagues)")
     p.add_argument("--audit", action="store_true", help="show every player: droppable or why not")
     p.add_argument("--notify", action="store_true")
@@ -928,6 +945,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("league")
     p.add_argument("--limit", type=int, default=6)
     p.add_argument("--propose", type=int, help="queue idea N for approval")
+    p.add_argument("--preview", type=int, help="print the approval text for idea N without queuing it")
     p.add_argument("--include-lopsided", action="store_true",
                    help="also show trades that hurt the other team or miss their needs (hard sells)")
     p.add_argument("--notify", action="store_true")
