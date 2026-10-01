@@ -36,7 +36,7 @@ notify:
 
 # Factor weights and caps (all optional; defaults in src/fantasy_ai/factors/score.py).
 factors:
-  matchup: {weight: 0.5, cap: 0.12}      # opponent points allowed to the position
+  matchup: {weight: 0.0, cap: 0.12}      # OFF: hurt weekly accuracy in the 2026 wk 2-3 replay (see score.py)
   vegas: {weight: 0.4, cap: 0.10}        # needs ODDS_API_KEY in .env, skipped otherwise
   usage: {weight: 0.15, cap: 0.08}       # needs the optional nflreadpy package
   ceiling: {weight: 0.15, cap: 0.04}

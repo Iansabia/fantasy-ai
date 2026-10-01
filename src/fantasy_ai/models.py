@@ -15,6 +15,8 @@ SEASON_WEEKS = 17  # fantasy regular season + playoffs, used for rest-of-season 
 SEASON_GAMES = 17
 WEEKLY_TO_SEASON_RATE = 0.82   # puts the weekly projection on the season-rate scale
 WEEKLY_WEIGHT = 0.5            # blend: half fresh weekly view, half stable season rate
+WEEKLY_CAP = 1.5               # the weekly half never counts for more than 1.5x the season rate:
+                               # one big week (a teammate out, a soft matchup) is not a new role
 
 
 @dataclass
@@ -51,6 +53,7 @@ class Player:
     news_status: str | None = None           # status from news; if set, proj_week already includes it
     news_status_factor: float = 1.0          # the status part of the news multiplier (gametime.py)
     deferred_until: object | None = None     # datetime of the run that will decide a questionable start
+    fill_in_week: bool = False               # a better teammate at his position is out THIS week (engine)
     score_multiplier: float = 1.0            # product of bounded factors (factors/score.py)
     factors: list = field(default_factory=list)   # factors.score.Factor rows with reasons
     reasons: list[str] = field(default_factory=list)   # cited reasons for any adjustment
@@ -94,14 +97,16 @@ class Player:
     def per_game(self) -> float:
         """Rest-of-season points per game: half ESPN's season rate (season total / 17 games),
         half ESPN's current weekly projection scaled onto that rate. The weekly half is skipped
-        when there is no weekly number (bye, out), so a bye week never drags value down.
+        when there is no weekly number (bye, out) and when he is only filling in for an injured
+        teammate this week, and it is capped at WEEKLY_CAP x the season rate.
         Falls back to the weekly projection when there is no season projection."""
         weekly = self.base_proj_week if self.base_proj_week is not None else self.proj_week
         if self.proj_season <= 0:
             return weekly
         season_rate = self.proj_season / SEASON_GAMES
-        if weekly > 0 and not self.is_out():
-            return WEEKLY_WEIGHT * WEEKLY_TO_SEASON_RATE * weekly + (1 - WEEKLY_WEIGHT) * season_rate
+        if weekly > 0 and not self.is_out() and not self.fill_in_week:
+            w = min(WEEKLY_TO_SEASON_RATE * weekly, WEEKLY_CAP * season_rate)
+            return WEEKLY_WEIGHT * w + (1 - WEEKLY_WEIGHT) * season_rate
         return season_rate
 
     def ros_value(self, current_week: int) -> float:

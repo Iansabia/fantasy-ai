@@ -60,12 +60,21 @@ def ctx_for(state):
     return ctx
 
 
+ON = {"matchup": {"weight": 0.5}}      # the matchup factor is off by default (hurt accuracy); tests switch it on
+
+
+def test_matchup_factor_is_off_by_default():
+    s = make_state([wr(1, "Kc Guy", 10, 1)], raw_pro=RAW_PRO)
+    score.apply(s, ctx_for(s))
+    assert all(f.name != "matchup" or f.multiplier == 1.0 for f in s.find_player("Kc Guy").factors)
+
+
 def test_matchup_and_vegas_and_weather_bounded_with_reasons():
     s = make_state([wr(1, "Kc Guy", 10, 1), wr(2, "Den Guy", 10, 2), wr(3, "Buf Guy", 10, 3)], raw_pro=RAW_PRO)
     ctx = ctx_for(s)
     ctx.vegas = {"KC": (27.2, -7.5), "DEN": (19.8, 7.5)}
     ctx.weather = {"BUF": (25.0, 2.0)}
-    score.apply(s, ctx)
+    score.apply(s, ctx, ON)
     kc, den, buf = (s.find_player(n) for n in ("Kc Guy", "Den Guy", "Buf Guy"))
     # KC WR faces DEN (allows 40 vs 30 avg) at home with a 27.2 total: boosted
     assert kc.score_multiplier > 1.1 and den.score_multiplier < 1.0
@@ -102,7 +111,7 @@ def test_factors_change_the_lineup_and_reasons_cite_them():
     s = make_state([b.entry(b.player(1, "Q", "QB", 20), 0), b.entry(b.player(2, "Den Guy", "WR", 10, pro=2), 4),
                     b.entry(b.player(3, "Kc Guy", "WR", 10, pro=1), 20)],
                    slots={"0": 1, "4": 1, "20": 5, "21": 1}, raw_pro=RAW_PRO)
-    score.apply(s, ctx_for(s))
+    score.apply(s, ctx_for(s), ON)
     res = optimize(s)
     start = next(m for m in res.moves if m.name == "Kc Guy")
     assert start.to_slot == 4 and "matchup" in start.reason
@@ -175,7 +184,7 @@ def test_cooldown_blocks_until_expiry(tmp_path):
     p.check_write("a")
 
 
-@pytest.mark.parametrize("status", [401, 403, 429, 500])
+@pytest.mark.parametrize("status", [403, 429, 500])      # 401 = expired cookies: clear stop, no cooldown (test_live_readiness)
 def test_writer_pushback_sets_cooldown_no_retry(tmp_path, status):
     calls = {"n": 0}
 

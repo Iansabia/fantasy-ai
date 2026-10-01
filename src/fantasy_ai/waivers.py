@@ -48,7 +48,8 @@ DEFAULTS = {
 }
 MIN_GAIN = DEFAULTS["min_gain_free_agent"]
 DEPTH_SHARE = 0.25
-UPTREND_MARGIN = 5.0   # dropping a player trending up hard needs threshold + this and a better 3-week outlook
+UPTREND_MARGIN = 5.0
+LOW_CONFIDENCE_BAR = 1.5   # an add we rank 20+ spots above the experts needs 1.5x the usual gain   # dropping a player trending up hard needs threshold + this and a better 3-week outlook
 SURPLUS_SHARE = 0.05   # beyond useful depth still has some value (trades, injuries), so a 115-ROS
                        # surplus WR is never treated as equal to a 9-ROS one
 
@@ -294,6 +295,10 @@ def evaluate_add(state: LeagueState, add: Player, prefs=None, cfg: dict | None =
     next3_drop = round(sum(week_worth(d, state, k, cfg) for k in range(H)), 1) if d else 0.0
     claim = add.status == "WAIVERS"
     threshold = cfg["min_gain_waiver"] if (claim and cfg["rolling_priority"]) else cfg["min_gain_free_agent"]
+    from .experts import caution, overrated
+    low_conf = overrated(add, state)
+    if low_conf:
+        threshold = round(threshold * LOW_CONFIDENCE_BAR, 1)      # experts disagree hard: needs a bigger gain
 
     why: list[tuple[float, str]] = []
     if lineup:
@@ -323,6 +328,9 @@ def evaluate_add(state: LeagueState, add: Player, prefs=None, cfg: dict | None =
     reason = f"{add.name} ({add.position}, {'waivers' if claim else 'free agent'}): {drop_txt}, +{gain:.1f} pts over {H} wks."
     if claim and cfg["rolling_priority"]:
         reason += f" Costs waiver priority, so it needs +{threshold:.0f}."
+    warn = caution(add, state)
+    if warn:
+        lines.insert(0, warn + (f"; needs +{threshold:g}" if low_conf else ""))
     from .hype import line as hype_line
     hl = hype_line(add)
     if hl and getattr(add.hype, "label", "Steady") != "Steady":

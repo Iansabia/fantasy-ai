@@ -5,7 +5,7 @@
 - Random 20-90 s gaps between leagues and between separate write requests.
 - Reads: cached per run by the reader (one fetch per view per league), 1-4 s random gaps.
 - Write caps: per league per day (default 6) and per run (default 3). Hitting one stops writes.
-- On 401/403/429 or any unexpected non-409 error: no retries, stop that league, and set a
+- On 403/429 or any unexpected non-409 error: no retries, stop that league, and set a
   cooldown (default 24 h) stored in data/pacing.json.
 - One browser-like User-Agent; requests are strictly sequential.
 Tests inject a fake sleep/clock so nothing really waits.

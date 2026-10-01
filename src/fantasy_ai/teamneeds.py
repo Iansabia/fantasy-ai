@@ -292,6 +292,7 @@ class Idea:
     price: float = 1.0                  # 1.0 inside the fair band, lower when we overpay / underpay a lot
     sweetened: "Idea | None" = None     # easier-to-accept version when this one is a hard sell
     their_drops: list = field(default_factory=list)   # players they must cut to fit the roster limit
+    cautions: list = field(default_factory=list)      # expert-disagreement warnings on players we get
 
     @property
     def overpay(self) -> float | None:
@@ -318,6 +319,7 @@ MIN_THEIR_GAIN = 3.0          # partner's lineup must gain a meaningful amount (
 MAX_OVERPAY = 1.20            # default view never pays 20%+ over market (lopsided view may)
 MAX_THEIR_LOSS = 20.0         # never suggest trades that gut the partner's lineup
 MAX_GIVE = 3
+LOW_CONFIDENCE_SCORE = 0.75   # target we rank 20+ spots above the experts
 PER_TARGET = 20               # packages per target evaluated in full (best by quick cost first)
 
 
@@ -435,11 +437,15 @@ def trade_ideas(state: LeagueState, prefs=None, top: int = 8, min_gain: float = 
                                + 0.3 * need_match + 0.3 * min(1.0, ratio), 2)
                 price = price_factor(ratio)
                 score = round(our_gain * price * (0.4 + 0.6 * accept), 1)
+                from .experts import caution, overrated
+                warns = [w for w in (caution(p, state) for p in get) if w]
+                if any(overrated(p, state) for p in get):
+                    score = round(score * LOW_CONFIDENCE_SCORE, 1)       # we may be overrating the target
                 group.append(Idea(tid, t.name.strip(), list(give), get, our_gain, their_gain, fg, ft,
                                   round(min(ratio, 1 / ratio), 2), accept, score, _why_partner(pf, give, get, n),
                                   _pitch(pf, give, get, their_gain, n),
                                   give_cost={p.player_id: cost[p.player_id] for p in give}, price=round(price, 2),
-                                  their_drops=their_drops))
+                                  their_drops=their_drops, cautions=warns))
             if group:
                 groups.append(group)
     out = []

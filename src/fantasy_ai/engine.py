@@ -28,6 +28,26 @@ def lineup_research_set(state: LeagueState) -> list[Player]:
     return list(out.values())
 
 
+def mark_fill_ins(state: LeagueState) -> list[str]:
+    """Flag players whose THIS-week projection is a fill-in role: a same-team, same-position
+    teammate with a bigger season projection is out, doubtful or on IR this week. Their weekly
+    number then stays out of rest-of-season value (Player.per_game)."""
+    everyone = {p.player_id: p for t in state.teams.values() for p in t.roster}
+    everyone.update({p.player_id: p for p in state.free_agents})
+    by_group: dict[tuple[str, str], list[Player]] = {}
+    for p in everyone.values():
+        if p.pro_team and p.position in ("QB", "RB", "WR", "TE"):
+            by_group.setdefault((p.pro_team, p.position), []).append(p)
+    notes = []
+    for ps in by_group.values():
+        hurt = [q for q in ps if q.is_out() or q.news_out or q.game_status == "DOUBTFUL" or q.ir_eligible()]
+        for p in ps:
+            if any(q is not p and q.proj_season > p.proj_season for q in hurt):
+                p.fill_in_week = True
+                notes.append(p.name)
+    return notes
+
+
 def prepare(state: LeagueState, reader, factor_cfg: dict | None = None, *, news: bool = True,
             factors: bool = True, research: list[Player] | None = None, llm=None, client=None,
             hype_cfg: dict | None = None, schedule_cfg: dict | None = None) -> dict:
@@ -40,6 +60,7 @@ def prepare(state: LeagueState, reader, factor_cfg: dict | None = None, *, news:
         players = research if research is not None else lineup_research_set(state)
         enrich(state, llm or LLM(), client=client, players=players)
         info.update(news=True, news_players=len(players))
+    info["fill_ins"] = mark_fill_ins(state)
     from . import ownership
     try:
         ownership.apply(state, ownership.record(state))

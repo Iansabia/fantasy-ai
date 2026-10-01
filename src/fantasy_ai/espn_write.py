@@ -207,7 +207,8 @@ class TransactionWriter:
     readback: returns {playerId: lineupSlotId} for our team. After a timeout it tells us whether
     the write landed (jwulff 8.1: a timed-out write is not a failed write). There are no
     automatic retries at all: if the read-back shows nothing changed, the next scheduled run
-    tries again. 401/403/429 or any unexpected non-409 status sets a pacing cooldown.
+    tries again. 403/429 or any unexpected non-409 status sets a pacing cooldown; 401 (expired
+    cookies) stops with a plain "refresh your cookies" message and no cooldown.
     """
 
     def __init__(self, cfg: LeagueConfig, creds: Credentials | None,
@@ -231,8 +232,11 @@ class TransactionWriter:
         try:
             return self._post_with_readback(url, payload)
         except WriteRejected as e:
-            if e.status in (401, 403, 429) or (e.status >= 300 and e.status not in (400, 409)):
-                from .pacing import PacingStop
+            from .pacing import PacingStop
+            if e.status == 401:
+                from .espn_read import expired_cookies_message
+                raise PacingStop(expired_cookies_message(self.cfg)) from e
+            if e.status in (403, 429) or (e.status >= 300 and e.status not in (400, 409)):
                 raise PacingStop(self.pacer.cooldown(self.cfg.name, f"HTTP {e.status}")) from e
             raise
 

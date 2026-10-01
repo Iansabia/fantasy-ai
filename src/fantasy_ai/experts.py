@@ -21,6 +21,7 @@ BASE = "https://www.fantasypros.com/nfl/rankings/"
 PAGES = {"ros": "ros-ppr-overall.php", "QB": "qb.php", "RB": "ppr-rb.php", "WR": "ppr-wr.php", "TE": "ppr-te.php"}
 TTL = 12 * 3600
 DISAGREE = 10
+TRIPWIRE = 20          # waiver adds / trade targets: we rank him 20+ spots above the experts -> low confidence
 TEAM_FIX = {"JAC": "JAX", "WAS": "WSH", "LA": "LAR"}
 
 
@@ -77,8 +78,11 @@ def attach(state, table: dict) -> int:
     return n
 
 
-def our_pos_ranks(state) -> dict[int, int]:
-    """Our rest-of-season rank within position over every player we loaded (rosters + FAs)."""
+def our_pos_ranks(state, fresh: bool = False) -> dict[int, int]:
+    """Our rest-of-season rank within position over every player we loaded (rosters + FAs).
+    Cached on the state (values are fixed once engine.prepare has run)."""
+    if not fresh and getattr(state, "_our_ranks", None) is not None:
+        return state._our_ranks
     wk = state.scoring_period
     seen, by_pos = set(), {}
     for p in [q for t in state.teams.values() for q in t.roster] + state.free_agents:
@@ -90,7 +94,30 @@ def our_pos_ranks(state) -> dict[int, int]:
     for pos, ps in by_pos.items():
         for i, p in enumerate(sorted(ps, key=lambda q: q.ros_value(wk), reverse=True), 1):
             out[p.player_id] = i
+    state._our_ranks = out
     return out
+
+
+def caution(p, state) -> str | None:
+    """Plain warning when we are 20+ spots off the experts on this player (either way)."""
+    rec = getattr(p, "ecr", None)
+    ours = our_pos_ranks(state).get(p.player_id)
+    if not rec or not rec.get("ros") or ours is None:
+        return None
+    gap = rec["ros"] - ours
+    if abs(gap) <= TRIPWIRE:
+        return None
+    if gap > 0:
+        return (f"CAUTION: we rank {p.name} {p.position}{ours}, experts {rec['ros_text']} ROS "
+                f"({gap} spots lower): low confidence, we may be overrating him")
+    return f"NOTE: experts rank {p.name} {rec['ros_text']} ROS, we have {p.position}{ours} ({-gap} spots higher than us)"
+
+
+def overrated(p, state) -> bool:
+    """We rank him 20+ spots above the experts."""
+    rec = getattr(p, "ecr", None)
+    ours = our_pos_ranks(state).get(p.player_id)
+    return bool(rec and rec.get("ros") and ours is not None and rec["ros"] - ours > TRIPWIRE)
 
 
 def note(p, state, ranks: dict[int, int] | None = None) -> str | None:

@@ -17,7 +17,11 @@ from .stadiums import STADIUMS
 
 DEFAULTS = {
     "second_projection": {"weight": 0.5, "cap": 0.15},   # blend toward another source's projection
-    "matchup": {"weight": 0.5, "cap": 0.12},             # opponent points allowed to the position
+    # OFF (weight 0): replaying 2026 weeks 2-3, the points-allowed matchup factor made weekly
+    # projections WORSE (MAE 5.56 -> 5.67, mean Spearman 0.351 -> 0.321); early-season points
+    # allowed are 1-3 games of noise. Re-enable only after `fai score-values`-style tracking
+    # shows it helps (set factors.matchup.weight in config).
+    "matchup": {"weight": 0.0, "cap": 0.12},
     "home": {"cap": 0.015},
     "vegas": {"weight": 0.4, "cap": 0.10, "baseline": 22.5},
     "script": {"cap": 0.04, "spread": 7.0},
@@ -78,7 +82,7 @@ def score_factors(p: Player, ctx: WeekContext, cfg: dict) -> list[Factor]:
         allowed = ctx.def_vs_pos.get((game.opp, p.position))
         pos_vals = [v for (t, pos), v in ctx.def_vs_pos.items() if pos == p.position]
         rank = ctx.def_rank.get((game.opp, p.position))
-        if allowed is not None and pos_vals:
+        if allowed is not None and pos_vals and c["weight"] > 0:
             mean = sum(pos_vals) / len(pos_vals)
             m = 1 + _clamp((allowed / mean - 1) * c["weight"], c["cap"]) if mean > 0 else 1.0
             rk = f" ({_ordinal(rank)} vs {p.position})" if rank else ""

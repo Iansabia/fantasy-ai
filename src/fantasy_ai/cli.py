@@ -177,8 +177,8 @@ def _apply_lineup(cfg: AppConfig, lg: LeagueConfig, writer: TransactionWriter, s
         rc = _submit(writer, lineup_payload(lg.team_id, state.scoring_period, res.moves), send, "lineup")
         status = ("sent" if send else "dry-run") if rc == 0 else f"failed (rc {rc})"
     if res.ir_moves and rc == 0:
-        print("\nIR moves go in a separate request after the lineup one. Note: an IR slot move has not "
-              "been captured on the wire yet (jwulff 05 section 8 item 9); if ESPN rejects it, the lineup is unaffected.")
+        print("\nIR moves go in a separate request after the lineup one (same ROSTER/LINEUP shape, slot 21, as the "
+              "IR moves ESPN executed in these leagues' transaction logs); if ESPN rejects it, the lineup is unaffected.")
         rc_ir = _submit(writer, lineup_payload(lg.team_id, state.scoring_period, res.ir_moves), send, "IR")
         rc = rc or rc_ir
         if status == "no changes":
@@ -438,6 +438,11 @@ def cmd_trade(cfg: AppConfig, args) -> int:
             print(f"    {hype_line(p)}")
         for r in p.reasons[:2]:
             print(f"    {r}")
+    from .experts import caution
+    for p in get:
+        w = caution(p, state)
+        if w:
+            print(("LOW CONFIDENCE: " if w.startswith("CAUTION") else "") + w)
     print(f"Verdict: {ev.verdict}. {ev.reason}")
     if not args.propose:
         return 0
@@ -543,6 +548,8 @@ def cmd_trade_ideas(cfg: AppConfig, args) -> int:
         if tn:
             print(f"     trend: this trade {tn}")
         print(f"     experts: {_expert_line(idea.give + idea.get, state)}")
+        for w in idea.cautions:
+            print(f"     {'LOW CONFIDENCE: ' if w.startswith('CAUTION') else ''}{w}")
         for p in idea.give + idea.get:
             if hype_line(p) and p.hype.label != "Steady":
                 print(f"     {hype_line(p)}")

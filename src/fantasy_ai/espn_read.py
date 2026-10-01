@@ -152,6 +152,12 @@ def parse_league(raw_league: dict, raw_pro: dict, my_team_id: int,
 
 # ---------------------------------------------------------------- fetching
 
+def expired_cookies_message(cfg) -> str:
+    prof = (cfg.auth_profile or "").upper()
+    return (f"ESPN refused access (401) for {cfg.label}: the login cookies for profile '{cfg.auth_profile}' are "
+            f"expired or wrong. Log in at espn.com in a browser, copy fresh espn_s2 and SWID cookies into .env as "
+            f"ESPN_S2_{prof} and SWID_{prof}. Nothing was changed; no cooldown was set.")
+
 class EspnReader:
     """Loads a league either from a fixture dir (offline) or from ESPN via espn-api.
 
@@ -160,7 +166,8 @@ class EspnReader:
 
     Every network read goes through the pacer (1-4 s random gap, browser-like headers) and is
     cached for the life of this reader, so each view is fetched at most once per run.
-    401/403/429 or other unexpected HTTP errors set a cooldown and raise PacingStop.
+    401 (expired cookies) raises PacingStop with a plain fix-it message and no cooldown; other
+    unexpected HTTP errors set a cooldown and raise PacingStop.
     """
 
     def __init__(self, cfg: LeagueConfig, creds: Credentials | None = None, pacer=None):
@@ -191,7 +198,9 @@ class EspnReader:
         try:
             data = fn()
         except ESPNAccessDenied as e:
-            raise PacingStop(self.pacer.cooldown(self.cfg.name, "access denied on read")) from e
+            # 401 = login problem, not ESPN pushing back: stop this league, but set NO cooldown, so
+            # the next run works as soon as the cookies are refreshed.
+            raise PacingStop(expired_cookies_message(self.cfg)) from e
         except ESPNUnknownError as e:
             raise PacingStop(self.pacer.cooldown(self.cfg.name, str(e))) from e
         self._cache[key] = data
