@@ -113,8 +113,18 @@ def test_news_out_benches_even_if_espn_active():
     assert optimize(s).target[1] == 20
 
 
-def test_buzz_raises_waiver_value(demo_state):
+def test_buzz_bump_off_by_default_but_reason_kept(demo_state):
     from fantasy_ai.waivers import evaluate_add
+    wonder = demo_state.find_player("Waiver Wonder")
+    before = evaluate_add(demo_state, wonder).add_value
+    adjust.apply(demo_state, [], {901: Buzz(add_rank=1, add_count=50000)})
+    w = evaluate_add(demo_state, wonder)
+    assert w.add_value == before and any("most-added on Sleeper" in line for line in w.why)
+
+
+def test_buzz_raises_waiver_value_when_enabled(demo_state, monkeypatch):
+    from fantasy_ai.waivers import evaluate_add
+    monkeypatch.setattr(adjust, "BUZZ_ROS_ENABLED", True)
     wonder = demo_state.find_player("Waiver Wonder")
     before = evaluate_add(demo_state, wonder).add_value
     adjust.apply(demo_state, [], {901: Buzz(add_rank=1, add_count=50000)})

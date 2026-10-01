@@ -293,6 +293,8 @@ class Idea:
     sweetened: "Idea | None" = None     # easier-to-accept version when this one is a hard sell
     their_drops: list = field(default_factory=list)   # players they must cut to fit the roster limit
     cautions: list = field(default_factory=list)      # expert-disagreement warnings on players we get
+    sensitivity: str = ""                             # does the verdict hold if values move +-5%?
+    robust: bool = True
 
     @property
     def overpay(self) -> float | None:
@@ -315,7 +317,8 @@ OVERPAY_PENALTY = 1.5         # score x (1 - 1.5 x overpay beyond 5%): 20% over 
 UNDERPAY_PENALTY = 0.75       # lowballing is less bad for us, but hurts acceptance
 HARD_SELL = 3.0               # partner's lineup loses more than this -> "hard sell"
 CLEAR_EDGE = 10.0             # ROS lineup points that count as a clear win for us on an even-market deal
-MIN_THEIR_GAIN = 3.0          # partner's lineup must gain a meaningful amount (Ian: "+3 ROS or more")
+MIN_THEIR_GAIN = 6.0          # partner's lineup must gain a meaningful amount (Ian, trust audit: +6 ROS)
+SENSITIVITY = 0.05            # each idea is re-checked with both sides' values moved +-5%
 MAX_OVERPAY = 1.20            # default view never pays 20%+ over market (lopsided view may)
 MAX_THEIR_LOSS = 20.0         # never suggest trades that gut the partner's lineup
 MAX_GIVE = 3
@@ -458,7 +461,44 @@ def trade_ideas(state: LeagueState, prefs=None, top: int = 8, min_gain: float = 
                 best.sweetened = easier[0]
         out.append(best)
     out.sort(key=lambda i: i.score, reverse=True)
-    return out[:top]
+    out = out[:top]
+    for i in out:
+        _sensitivity(state, i, prof[i.partner_id], min_gain, include_lopsided)
+    return out
+
+
+def _sensitivity(state: LeagueState, idea: Idea, pf: Profile, min_gain: float, lopsided: bool) -> None:
+    """Re-run both sides with the traded players' values moved +-SENSITIVITY in the worst
+    direction for each team (ours: what we give +5%, what we get -5%; theirs: the reverse)."""
+    def run(give_f: float, get_f: float) -> tuple[float, float]:
+        moved = [(p, give_f) for p in idea.give] + [(p, get_f) for p in idea.get]
+        saved = [(p, p.proj_week, p.base_proj_week, p.proj_season) for p, _ in moved]
+        for p, f in moved:
+            p.proj_week, p.proj_season = p.proj_week * f, p.proj_season * f
+            if p.base_proj_week is not None:
+                p.base_proj_week *= f
+        if hasattr(state, "_vorp_cache"):
+            del state._vorp_cache
+        try:
+            ours, _ = lineup_change(state, state.my_team_id, idea.give, idea.get, {})
+            theirs, _ = lineup_change(state, idea.partner_id, idea.get, idea.give, {})
+        finally:
+            for p, pw, bpw, ps in saved:
+                p.proj_week, p.base_proj_week, p.proj_season = pw, bpw, ps
+            if hasattr(state, "_vorp_cache"):
+                del state._vorp_cache
+        return ours, theirs
+
+    up, down = 1 + SENSITIVITY, 1 - SENSITIVITY
+    ours_worst, theirs_when_ours_worst = run(up, down)
+    ours_when_theirs_worst, theirs_worst = run(down, up)
+    ratio = (idea.fc_give / idea.fc_get) if idea.fc_give and idea.fc_get else 1.0
+    ok = lopsided or (wins_both_ways(ours_worst, theirs_when_ours_worst, ratio, pf, idea.give, min_gain)
+                      and wins_both_ways(ours_when_theirs_worst, theirs_worst, ratio, pf, idea.give, min_gain))
+    idea.robust = ok and ours_worst > 0
+    rng = f"ours {ours_worst:+.1f} to {ours_when_theirs_worst:+.1f}, theirs {theirs_worst:+.1f} to {theirs_when_ours_worst:+.1f}"
+    idea.sensitivity = (f"holds if values move +-5% ({rng})" if idea.robust
+                        else f"FRAGILE: the verdict can flip if values move +-5% ({rng})")
 
 
 def _over_limit(roster, state) -> bool:

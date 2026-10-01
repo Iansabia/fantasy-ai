@@ -86,7 +86,8 @@ def _notifier(cfg: AppConfig, lg: LeagueConfig, args) -> notify.Notifier | None:
 def _prepare(cfg: AppConfig, state, reader, args, research=None) -> dict:
     return engine.prepare(state, reader, cfg.factors, news=not getattr(args, "no_news", False),
                           factors=not getattr(args, "no_factors", False), research=research,
-                          hype_cfg=getattr(cfg, "hype", None), schedule_cfg=getattr(cfg, "schedule", None))
+                          hype_cfg=getattr(cfg, "hype", None), schedule_cfg=getattr(cfg, "schedule", None),
+                          signals_cfg=getattr(cfg, "signals", None))
 
 
 def _submit(writer: TransactionWriter, payload: dict, send: bool, label: str = "") -> int:
@@ -538,6 +539,8 @@ def cmd_trade_ideas(cfg: AppConfig, args) -> int:
         print(f"     {market(idea)}")
         tag = " (HARD SELL)" if idea.hard_sell else ""
         print(f"     lineup ROS: ours {idea.our_gain:+.1f}, theirs {idea.their_gain:+.1f}{tag}; acceptance {idea.accept:.0%}")
+        if idea.sensitivity:
+            print(f"     sensitivity: {idea.sensitivity}")
         print(f"     what each give costs our lineup: {costs(idea)}")
         if idea.their_drops:
             print(f"     roster limit: they would drop {', '.join(p.name for p in idea.their_drops)} (counted above)")

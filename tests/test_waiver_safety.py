@@ -92,7 +92,8 @@ def test_every_unprotected_bench_player_is_evaluated_for_every_add():
 
 # ---- roster %
 
-def test_ownership_history_trend_and_notes(isolated_data_dir):
+def test_ownership_history_trend_and_notes(isolated_data_dir, monkeypatch):
+    monkeypatch.setattr(ownership, "OWNERSHIP_ROS_ENABLED", True)      # off by default (trust audit)
     s = friendly()
     boston = s.find_player("Denzel Boston")
     hunter = s.find_player("Travis Hunter")
@@ -183,3 +184,12 @@ def test_explain_kicker_swap_wording():
     text = waivers.swap_view(s, loop, waivers.merged(None))
     assert text.startswith("kicker swap: projects 11.5 vs your starter Jason Myers 10.5")
     assert "needs +1.5" in text and "not suggested" in text
+
+
+def test_ownership_bump_off_by_default(isolated_data_dir):
+    s = friendly()
+    boston = s.find_player("Denzel Boston")
+    boston.percent_owned, boston.percent_change = 42.0, 20.0
+    before = boston.ros_value(4)
+    ownership.apply(s, ownership.record(s))
+    assert boston.ros_value(4) == before and boston.own_week == 20.0

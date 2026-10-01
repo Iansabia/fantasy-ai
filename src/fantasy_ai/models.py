@@ -54,6 +54,7 @@ class Player:
     news_status_factor: float = 1.0          # the status part of the news multiplier (gametime.py)
     deferred_until: object | None = None     # datetime of the run that will decide a questionable start
     fill_in_week: bool = False               # a better teammate at his position is out THIS week (engine)
+    weeks_out: int = 0                       # known games still to miss (IR stash valuation)
     score_multiplier: float = 1.0            # product of bounded factors (factors/score.py)
     factors: list = field(default_factory=list)   # factors.score.Factor rows with reasons
     reasons: list[str] = field(default_factory=list)   # cited reasons for any adjustment
@@ -116,7 +117,7 @@ class Player:
         if self.bye_week is not None and self.bye_week >= current_week:
             weeks -= 1
         if self.is_out() and weeks > 0:
-            weeks -= 1
+            weeks = max(0, weeks - max(1, self.weeks_out))
         return round(self.per_game() * weeks * self.ros_multiplier, 1)
 
     @property

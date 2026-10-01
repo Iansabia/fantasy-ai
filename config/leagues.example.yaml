@@ -66,3 +66,8 @@ waivers:
 schedule:
   sunday_inactive_check: false
   # runs: {full: "thu 14:00", recheck: "sat 14:00", inactives: "sun 11:45"}   # optional override
+
+# Signals that move rest-of-season value. Off after the trust audit (never backtested):
+signals:
+  buzz_ros: false        # Sleeper trending-adds bump (up to +10%)
+  ownership_ros: false   # roster-% trend bump (up to +8%)

@@ -16,7 +16,7 @@ from .context import WeekContext
 from .stadiums import STADIUMS
 
 DEFAULTS = {
-    "second_projection": {"weight": 0.5, "cap": 0.15},   # blend toward another source's projection
+    "second_projection": {"weight": 0.75, "cap": 0.15},  # blend toward Sleeper (beat raw ESPN in the replay)
     # OFF (weight 0): replaying 2026 weeks 2-3, the points-allowed matchup factor made weekly
     # projections WORSE (MAE 5.56 -> 5.67, mean Spearman 0.351 -> 0.321); early-season points
     # allowed are 1-3 games of noise. Re-enable only after `fai score-values`-style tracking

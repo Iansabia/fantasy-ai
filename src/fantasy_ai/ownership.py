@@ -14,7 +14,10 @@ from .models import LeagueState, Player
 from .prefs import _load, _save, data_dir
 
 KEEP_WEEKS = 6
-OWN_CAP = 0.08            # max +-8% on rest-of-season value
+OWN_CAP = 0.08            # max +-8% on rest-of-season value (only when OWNERSHIP_ROS_ENABLED)
+# Roster-% bump on rest-of-season value: OFF (Ian, trust audit; never backtested). The trend is
+# still recorded and shown. Config `signals: {ownership_ros: true}` turns it back on.
+OWNERSHIP_ROS_ENABLED = False
 HOT_WEEK = 10.0           # +10 points of roster % in a week = hot
 FALLING_WEEK, FALLING_3WK = -8.0, -15.0
 
@@ -57,7 +60,7 @@ def apply(state: LeagueState, hist: dict) -> None:
         p.own_week, p.own_3wk = w, t3
         score = 0.004 * (w or 0) + 0.002 * (t3 or 0)
         mult = 1 + max(-OWN_CAP, min(OWN_CAP, score))
-        if abs(mult - 1) >= 0.005:
+        if OWNERSHIP_ROS_ENABLED and abs(mult - 1) >= 0.005:
             p.ros_multiplier = round(p.ros_multiplier * mult, 3)
 
 

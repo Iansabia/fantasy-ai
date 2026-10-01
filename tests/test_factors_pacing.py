@@ -232,5 +232,5 @@ def test_second_projection_compares_sleeper_with_raw_espn_not_injury_cut():
     p.base_proj_week, p.proj_week = 21.14, 13.40           # news cut him to x0.634
     ctx = WeekContext(week=4, second_proj={1: 22.3})
     f = next(f for f in score.score_factors(p, ctx, score.merged_config(None)) if f.name == "second projection")
-    assert abs(f.multiplier - (1 + (22.3 / 21.14 - 1) * 0.5)) < 1e-6       # ~x1.027, not x1.15
+    assert abs(f.multiplier - (1 + (22.3 / 21.14 - 1) * 0.75)) < 1e-6      # ~x1.041, not x1.15
     assert "vs ESPN 21.1" in f.reason

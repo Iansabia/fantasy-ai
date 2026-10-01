@@ -248,3 +248,17 @@ def test_replacement_floor_injured_starter_counts_as_waiver_level_not_zero():
     assert hurt < base                                           # losing a starter this week still costs
     # but only his value above a replacement WR this week, not his whole week
     assert base - hurt < wr1.proj_week
+
+
+def test_partner_bar_is_six_and_each_idea_has_a_sensitivity_note():
+    assert teamneeds.MIN_THEIR_GAIN == 6.0
+    ideas = teamneeds.trade_ideas(league(), Prefs(), top=5)
+    assert ideas
+    for i in ideas:
+        assert i.their_gain >= 6.0
+        assert i.sensitivity.startswith(("holds if values move +-5%", "FRAGILE"))
+    # values are restored after the check
+    s = league()
+    before = {p.player_id: (p.proj_week, p.proj_season) for t in s.teams.values() for p in t.roster}
+    teamneeds.trade_ideas(s, Prefs(), top=3)
+    assert before == {p.player_id: (p.proj_week, p.proj_season) for t in s.teams.values() for p in t.roster}

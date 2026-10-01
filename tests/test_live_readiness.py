@@ -127,3 +127,20 @@ def test_tripwire_marks_trade_targets():
             p.ecr = {"ros": 60, "ros_text": f"{p.position}60"}
     ideas = teamneeds.trade_ideas(s, Prefs(), top=5)
     assert ideas and all(i.cautions and i.cautions[0].startswith("CAUTION") for i in ideas)
+
+
+def test_ir_stash_valued_from_expert_rank_minus_games_out():
+    s = make_state([b.entry(b.player(1, "Rb1", "RB", 20, season=320, pro=4), 2),
+                    b.entry(b.player(2, "Rb2", "RB", 15, season=240, pro=4), 2),
+                    b.entry(b.player(3, "Rb3", "RB", 10, season=160, pro=4), 20),
+                    b.entry(b.player(4, "Stash", "RB", 0, season=0, injury="INJURY_RESERVE", pro=4), 20)])
+    stash = s.find_player("Stash")
+    assert stash.ros_value(4) == 0
+    stash.ecr = {"ros": 2, "ros_text": "RB2"}
+    assert engine.value_ir_stashes(s) == ["Stash"]
+    rb2 = s.find_player("Rb2")
+    weeks = 17 - 4 + 1 - 4                                         # bye week 7 is still ahead
+    assert abs(stash.ros_value(4) - round(rb2.per_game() * (weeks - 1), 1)) < 0.6
+    assert "IR stash valued from expert rank RB2" in stash.reasons[-1]
+    no_ecr = make_state([b.entry(b.player(5, "Other", "RB", 0, season=0, injury="INJURY_RESERVE"), 20)])
+    assert engine.value_ir_stashes(no_ecr) == []

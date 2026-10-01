@@ -48,11 +48,47 @@ def mark_fill_ins(state: LeagueState) -> list[str]:
     return notes
 
 
+IR_MIN_GAMES = 4      # NFL injured reserve: at least 4 games out
+
+
+def value_ir_stashes(state: LeagueState) -> list[str]:
+    """IR / OUT players ESPN projects at 0 for the season get a value from the expert ROS rank:
+    the per-game value of the player at that positional rank in our pool, minus the games he
+    will miss (at least 4 on injured reserve, 1 if just out). Without ECR they stay at 0."""
+    everyone = {p.player_id: p for t in state.teams.values() for p in t.roster}
+    everyone.update({p.player_id: p for p in state.free_agents})
+    pool: dict[str, list[Player]] = {}
+    for p in everyone.values():
+        if p.position in ("QB", "RB", "WR", "TE") and p.proj_season > 0:
+            pool.setdefault(p.position, []).append(p)
+    for ps in pool.values():
+        ps.sort(key=lambda q: q.per_game() * q.ros_multiplier, reverse=True)
+    notes = []
+    for p in everyone.values():
+        rank = (getattr(p, "ecr", None) or {}).get("ros")
+        if p.proj_season > 0 or not rank or p.position not in pool or not (p.is_out() or p.ir_eligible()):
+            continue
+        ps = pool[p.position]
+        ref = ps[min(rank, len(ps)) - 1]
+        p.proj_season = round(ref.per_game() * ref.ros_multiplier * 17, 1)
+        p.weeks_out = IR_MIN_GAMES if p.game_status == "INJURY_RESERVE" else 1
+        p.reasons.append(f"{p.name}: IR stash valued from expert rank {p.ecr.get('ros_text')} "
+                         f"(like {ref.name}), minus {p.weeks_out} game{'s' if p.weeks_out > 1 else ''} out")
+        notes.append(p.name)
+    return notes
+
+
 def prepare(state: LeagueState, reader, factor_cfg: dict | None = None, *, news: bool = True,
             factors: bool = True, research: list[Player] | None = None, llm=None, client=None,
-            hype_cfg: dict | None = None, schedule_cfg: dict | None = None) -> dict:
+            hype_cfg: dict | None = None, schedule_cfg: dict | None = None,
+            signals_cfg: dict | None = None) -> dict:
     """Mutates state. Returns a small dict describing which inputs were used (for explain)."""
     info = {"news": False, "news_players": 0, "factor_sources": []}
+    sig = signals_cfg or {}
+    from . import ownership as _own
+    from .news import adjust as _adj
+    _adj.BUZZ_ROS_ENABLED = bool(sig.get("buzz_ros", False))
+    _own.OWNERSHIP_ROS_ENABLED = bool(sig.get("ownership_ros", False))
     offline = reader.cfg.fixture_dir is not None
     if news and not offline:
         from .llm import LLM
@@ -84,6 +120,7 @@ def prepare(state: LeagueState, reader, factor_cfg: dict | None = None, *, news:
     info["hype"] = usage is not None
     from . import trend
     info["trend"] = trend.apply(state, usage)
+    info["ir_stashes"] = value_ir_stashes(state)
     from . import gametime
     info["gametime"] = gametime.apply(state, reader.raw_pro_teams(), schedule_cfg)
     if factors:

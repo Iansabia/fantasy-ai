@@ -29,6 +29,10 @@ POSSIBLY_OUT = 0.4   # "out" reported with low confidence
 # used only when the item gives no practice detail (else availability.play_probability)
 PLAY_FACTOR = {"likely": 0.97, "uncertain": 0.70, "unlikely": 0.25}
 ROLE_CAP, SENT_CAP, BUZZ_CAP = 0.25, 0.15, 0.10
+# Sleeper-buzz bump on rest-of-season value: OFF (Ian, trust audit). It drove most cases where we
+# ranked hot pickups 25-40 spots above the experts and was never backtested. Config
+# `signals: {buzz_ros: true}` turns it back on (engine.prepare sets this flag).
+BUZZ_ROS_ENABLED = False
 OUT_CONFIDENCE = 0.7
 
 
@@ -119,7 +123,8 @@ def compute(player: Player, signals: list[Signal], buzz: Buzz | None = None,
         adj.reasons.append(f"{player.name} trending in drops on Sleeper (#{buzz.drop_rank})")
     elif buzz and buzz.add_rank and buzz.add_rank <= 25:
         adj.reasons.append(f"{player.name} #{buzz.add_rank} most-added on Sleeper ({buzz.add_count} adds)")
-    adj.ros_multiplier = round((1 + role / 2) * (1 + max(-BUZZ_CAP, min(BUZZ_CAP, buzz_bonus))), 3)
+    buzz_term = max(-BUZZ_CAP, min(BUZZ_CAP, buzz_bonus)) if BUZZ_ROS_ENABLED else 0.0
+    adj.ros_multiplier = round((1 + role / 2) * (1 + buzz_term), 3)
     return adj
 
 
