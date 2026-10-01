@@ -71,3 +71,4 @@ schedule:
 signals:
   buzz_ros: false        # Sleeper trending-adds bump (up to +10%)
   ownership_ros: false   # roster-% trend bump (up to +8%)
+  ros_blend: true        # ROS value = held-out-fitted blend of ESPN, FantasyPros ECR and season PPG

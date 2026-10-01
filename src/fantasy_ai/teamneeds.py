@@ -51,7 +51,7 @@ def _backups(state: LeagueState) -> dict[str, int]:
 
 
 def season_value(p: Player) -> float:
-    return p.per_game() * p.ros_multiplier
+    return p.season_rate()
 
 
 ELIGIBLE = {"QB": [0, 7], "RB": [2, 3, 23, 7], "WR": [3, 4, 5, 23, 7], "TE": [5, 6, 23, 7]}

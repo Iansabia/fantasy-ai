@@ -144,3 +144,31 @@ def test_ir_stash_valued_from_expert_rank_minus_games_out():
     assert "IR stash valued from expert rank RB2" in stash.reasons[-1]
     no_ecr = make_state([b.entry(b.player(5, "Other", "RB", 0, season=0, injury="INJURY_RESERVE"), 20)])
     assert engine.value_ir_stashes(no_ecr) == []
+
+
+def test_ros_blend_uses_fitted_weights_in_range_and_caps_outside():
+    from fantasy_ai import ros_blend
+    s = make_state([b.entry(b.player(1, "Top Wr", "WR", 18, season=280), 4),
+                    b.entry(b.player(2, "Mid Wr", "WR", 12, season=190), 4),
+                    b.entry(b.player(3, "Deep Wr", "WR", 2, season=20), 20)])
+    s.find_player("Top Wr").ecr = {"ros": 1, "ros_text": "WR1"}
+    s.find_player("Mid Wr").ecr = {"ros": 2, "ros_text": "WR2"}
+    assert ros_blend.apply(s) == 3
+    a, b1, b2, b3 = ros_blend.FIT["coef"]["WR"]
+    top = s.find_player("Top Wr")
+    e = top.per_game() / 0.82
+    assert abs(top.ros_blend_pg - (a + b1 * e + b2 * e + b3 * e)) < 0.01        # rank 1 -> pool's best projection
+    deep = s.find_player("Deep Wr")
+    assert deep.ros_blend_pg <= deep.per_game() * deep.ros_multiplier + 1e-9   # no ECR: capped at old value
+    assert top.ros_value(4) == round(top.ros_blend_pg * 14, 1) and top.season_rate() == top.ros_blend_pg
+
+
+def test_ros_blend_can_be_switched_off(demo_state):
+    from fantasy_ai.config import LeagueConfig
+    from fantasy_ai.espn_read import EspnReader
+    lg = LeagueConfig(name="demo", owner="ian", league_id=99, team_id=1, year=2026, auth_profile="ian",
+                      fixture="tests/fixtures/demo")
+    reader = EspnReader(lg)
+    s = reader.load()
+    info = engine.prepare(s, reader, news=False, signals_cfg={"ros_blend": False})
+    assert "ros_blend" not in info and all(p.ros_blend_pg is None for p in s.roster)

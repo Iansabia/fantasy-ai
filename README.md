@@ -123,6 +123,12 @@ fai report demo
   FantasyPros expert ranks (ECR, PPR: this week + rest of season, `experts.py`) are shown next to
   our rank with a flag when we differ by more than 10 spots; information only (no history to
   backtest a blend).
+- **Multi-source backtest** (`scripts/fetch_history.py`, `scripts/backtest_sources.py`, 2023-25):
+  weekly, our replayed worth (ESPN x Sleeper blend x Vegas/home/script/wind) has the best start/sit
+  accuracy (0.673 vs ESPN 0.670, ECR 0.669, Sleeper 0.668, PPG 0.645) and MAE (5.19 vs ESPN 5.23).
+  Rest of season, FantasyPros ECR (0.561) beat our replayable value (0.481), so ROS value is now a
+  blend fitted on held-out seasons (`ros_blend.py`, 0.574): ESPN-scale projection + ECR rank as
+  points + season PPG, per position. Config `signals: {ros_blend: false}` turns it off.
 - **Value over replacement.** Anything that compares players across positions (trade fairness
   fallback and depth credit, calc-compare ranking, waiver drop choice, IR drop, scouting surplus
   order) uses rest-of-season value minus a replacement player at the position (`vorp.py`).

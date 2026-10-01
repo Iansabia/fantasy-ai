@@ -121,6 +121,9 @@ def prepare(state: LeagueState, reader, factor_cfg: dict | None = None, *, news:
     from . import trend
     info["trend"] = trend.apply(state, usage)
     info["ir_stashes"] = value_ir_stashes(state)
+    if sig.get("ros_blend", True):
+        from . import ros_blend
+        info["ros_blend"] = ros_blend.apply(state, usage)
     from . import gametime
     info["gametime"] = gametime.apply(state, reader.raw_pro_teams(), schedule_cfg)
     if factors:

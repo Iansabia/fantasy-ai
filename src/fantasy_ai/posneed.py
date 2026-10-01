@@ -32,7 +32,7 @@ class StarterView:
 
 
 def _season(p) -> float:
-    return p.per_game() * p.ros_multiplier
+    return p.season_rate()
 
 
 def starters(team, state, pos: str) -> list:

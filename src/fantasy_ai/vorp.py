@@ -21,7 +21,7 @@ REPL_WINDOW = 3
 
 
 def season_pg(p: Player) -> float:
-    return p.per_game() * p.ros_multiplier
+    return p.season_rate()
 
 
 def starters_per_position(state: LeagueState, pool: list[Player] | None = None) -> dict[str, int]:

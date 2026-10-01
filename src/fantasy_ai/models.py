@@ -55,6 +55,7 @@ class Player:
     deferred_until: object | None = None     # datetime of the run that will decide a questionable start
     fill_in_week: bool = False               # a better teammate at his position is out THIS week (engine)
     weeks_out: int = 0                       # known games still to miss (IR stash valuation)
+    ros_blend_pg: float | None = None        # fitted ROS blend, points per remaining week (ros_blend.py)
     score_multiplier: float = 1.0            # product of bounded factors (factors/score.py)
     factors: list = field(default_factory=list)   # factors.score.Factor rows with reasons
     reasons: list[str] = field(default_factory=list)   # cited reasons for any adjustment
@@ -110,10 +111,21 @@ class Player:
             return WEEKLY_WEIGHT * w + (1 - WEEKLY_WEIGHT) * season_rate
         return season_rate
 
+    def season_rate(self) -> float:
+        """Per-week rest-of-season rate used for cross-player comparisons (trades, VORP, ranks):
+        the fitted blend when available, else per-game value x role/usage multipliers."""
+        if self.ros_blend_pg is not None:
+            return self.ros_blend_pg
+        return self.per_game() * self.ros_multiplier
+
     def ros_value(self, current_week: int) -> float:
         """Rest-of-season projected points from the current week through week 17.
         OUT/IR players still carry value, but lose the current week."""
         weeks = max(0, SEASON_WEEKS - current_week + 1)
+        if self.ros_blend_pg is not None:            # per calendar week: byes and misses are inside the fit
+            if self.is_out() and weeks > 0:
+                weeks = max(0, weeks - max(1, self.weeks_out))
+            return round(self.ros_blend_pg * weeks, 1)
         if self.bye_week is not None and self.bye_week >= current_week:
             weeks -= 1
         if self.is_out() and weeks > 0:
