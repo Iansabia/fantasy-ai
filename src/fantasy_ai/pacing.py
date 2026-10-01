@@ -4,7 +4,8 @@
 - Scheduled runs start after a random 0-10 min jitter.
 - Random 20-90 s gaps between leagues and between separate write requests.
 - Reads: cached per run by the reader (one fetch per view per league), 1-4 s random gaps.
-- Write caps: per league per day (default 6) and per run (default 3). Hitting one stops writes.
+- Write caps: per league per day (default 6) and per league per run (default 3). Hitting one
+  stops writes for that league only; the other leagues in the run still get their lineups.
 - On 403/429 or any unexpected non-409 error: no retries, stop that league, and set a
   cooldown (default 24 h) stored in data/pacing.json.
 - One browser-like User-Agent; requests are strictly sequential.
@@ -54,7 +55,9 @@ class Pacer:
 
     def _save(self, d: dict) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        self.path.write_text(json.dumps(d, indent=1))
+        tmp = self.path.with_suffix(".tmp")
+        tmp.write_text(json.dumps(d, indent=1))
+        tmp.replace(self.path)          # atomic: a half-written file would silently reset caps/cooldowns
 
     def _today(self) -> str:
         return dt.datetime.fromtimestamp(self.clock(), dt.timezone.utc).strftime("%Y-%m-%d")
@@ -92,8 +95,8 @@ class Pacer:
         cd = self.in_cooldown(league)
         if cd:
             raise PacingStop(f"paused after ESPN pushed back; cooldown until {cd}")
-        if self.run_writes >= self.cfg["writes_per_run"]:
-            raise PacingStop(f"write cap for this run reached ({self.cfg['writes_per_run']})")
+        if self._writes_this_run.get(league, 0) >= self.cfg["writes_per_run"]:
+            raise PacingStop(f"write cap for this run reached ({self.cfg['writes_per_run']} per league)")
         today = self._load()["writes"].get(league, {}).get(self._today(), 0)
         if today >= self.cfg["writes_per_league_per_day"]:
             raise PacingStop(f"daily write cap reached ({self.cfg['writes_per_league_per_day']} per league)")
@@ -102,6 +105,7 @@ class Pacer:
 
     def record_write(self, league: str) -> None:
         self.run_writes += 1
+        self._writes_this_run[league] = self._writes_this_run.get(league, 0) + 1
         d = self._load()
         day = d["writes"].setdefault(league, {})
         day[self._today()] = day.get(self._today(), 0) + 1

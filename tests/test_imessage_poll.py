@@ -12,13 +12,19 @@ def store(tmp_path):
     return PendingStore(tmp_path / "pending.json")
 
 
+def _now_apple():
+    import datetime as dt
+    return int((dt.datetime.now(dt.timezone.utc) - imessage_poll.APPLE_EPOCH).total_seconds() * 1e9)
+
+
 def _db(path, rows):
     con = sqlite3.connect(path)
     con.execute("CREATE TABLE handle (ROWID INTEGER PRIMARY KEY, id TEXT)")
     con.execute("CREATE TABLE message (ROWID INTEGER PRIMARY KEY, text TEXT, attributedBody BLOB, "
-                "is_from_me INTEGER, handle_id INTEGER)")
+                "is_from_me INTEGER, handle_id INTEGER, date INTEGER)")
     con.executemany("INSERT INTO handle VALUES (?, ?)", [(1, "+15550001111"), (2, "+15559998888")])
-    con.executemany("INSERT INTO message (ROWID, text, attributedBody, is_from_me, handle_id) VALUES (?,?,?,?,?)", rows)
+    con.executemany("INSERT INTO message (ROWID, text, attributedBody, is_from_me, handle_id, date) "
+                    "VALUES (?,?,?,?,?,?)", [(*r, _now_apple()) for r in rows])
     con.commit()
     con.close()
 

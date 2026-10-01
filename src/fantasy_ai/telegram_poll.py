@@ -38,9 +38,8 @@ def poll(cfg: AppConfig, store: PendingStore, backend: TelegramBackend | None = 
         action, aid = cmd
         try:
             if action == "reject":
-                store.get(aid)
-                store.set_status(aid, "rejected")
-                rc, reply = 0, f"#{aid} rejected. Nothing sent."
+                from .cli import reject
+                rc, reply = reject(aid, store)
             else:
                 rc, reply = approve_fn(aid, cfg, store)
         except KeyError:

@@ -170,16 +170,31 @@ def split_text(text: str, limit: int = MAX_CHARS) -> list[str]:
 
 
 class Notifier:
+    """Sends to every recipient. A failed send (Messages.app error, Twilio down) never raises:
+    it is printed and kept in .failures, so one bad text can't stop a run halfway (a lineup
+    already saved, the next league never processed). Callers report .failures."""
+
     def __init__(self, backend: Backend, recipients: list[str]):
         self.backend, self.recipients = backend, recipients
+        self.failures: list[str] = []
 
     def send(self, text: str) -> int:
         n = 0
         limit = getattr(self.backend, "max_chars", MAX_CHARS)
+        if not self.recipients:
+            self.failures.append("no recipients configured")
+            print("WARNING: text not sent: no phone number configured for this owner")
+            return 0
         for to in self.recipients:
             for chunk in split_text(text, limit):
-                self.backend.send(to, chunk)
-                n += 1
+                try:
+                    self.backend.send(to, chunk)
+                    n += 1
+                except Exception as e:
+                    why = f"text to {mask(to)} failed ({type(e).__name__})"
+                    self.failures.append(why)
+                    print(f"WARNING: {why}")
+                    break                       # skip the rest of this text for this number
         return n
 
 
@@ -257,6 +272,9 @@ def msg_lineup_changes(label: str, res: LineupResult, sent: bool = True) -> str:
         lines.append("")
         lines.append("IR:")
         lines += [_move_line(m) for m in ir]
+    if getattr(res, "ir_error", None):
+        lines.append("")
+        lines.append(f"⚠️ IR move not saved: {res.ir_error}")
     lines.append("")
     lines.append("✅ Already saved on ESPN. No reply needed." if sent
                  else "Preview only, nothing changed on ESPN.")
@@ -275,9 +293,11 @@ def msg_pref_skipped(label: str, notes: list[str]) -> str:
 
 
 def msg_paused(label: str, why: str) -> str:
-    return (f"⏸️ {label} | Paused\n\n"
-            f"• {why}\n"
-            f"• No more ESPN writes for this league until the cooldown ends")
+    if "cap" in why and "cooldown" not in why and "pushed back" not in why:
+        tail = "• No more lineup writes for this league in this run; the next scheduled run tries again"
+    else:
+        tail = "• No more ESPN writes for this league until the cooldown ends"
+    return f"⏸️ {label} | Paused\n\n• {why}\n{tail}"
 
 
 def msg_starter_injuries(label: str, state: LeagueState) -> str | None:

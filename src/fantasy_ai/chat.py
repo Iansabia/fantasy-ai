@@ -51,12 +51,33 @@ def _now() -> dt.datetime:
 
 # ---------------------------------------------------------------- understanding
 
-def build_context(store: PendingStore, data_dir: Path = DATA) -> dict:
+def sender_leagues(sender: str, cfg) -> set[str] | None:
+    """Names and labels of the leagues this phone number owns (notify.to maps owner -> env var
+    of numbers). The cousin can only act on the cousin's leagues and Ian only on Ian's, the
+    same leagues each one gets approval texts for. None = no league config (tests): no limit."""
+    leagues = getattr(cfg, "leagues", None)
+    if not leagues:
+        return None
+    import os
+    from .imessage_poll import _digits
+    to_map = (getattr(cfg, "notify", None) or {}).get("to", {}) or {}
+    me = _digits(sender)
+    owners = {owner for owner, env in to_map.items()
+              if me in {_digits(n) for n in os.environ.get(env, "").split(",") if n.strip()}}
+    return {x.lower() for lg in leagues if lg.owner in owners for x in (lg.name, lg.label)}
+
+
+def _in_scope(league: str, scope: set[str] | None) -> bool:
+    return scope is None or str(league).lower() in scope
+
+
+def build_context(store: PendingStore, data_dir: Path = DATA, scope: set[str] | None = None) -> dict:
     snap = _load(data_dir / "snapshot.json", {})
     return {
         "pending": [{"id": a.id, "kind": a.kind, "league": a.league, "summary": a.summary}
-                    for a in store.open_actions()],
-        "leagues": snap.get("leagues", {}),   # label -> {"week": n, "roster": [{"name","pos","slot","proj","status"}]}
+                    for a in store.open_actions() if _in_scope(a.league, scope)],
+        # label -> {"week": n, "roster": [{"name","pos","slot","proj","status"}]}
+        "leagues": {k: v for k, v in snap.get("leagues", {}).items() if _in_scope(k, scope)},
     }
 
 
@@ -102,8 +123,16 @@ def parse_intent(raw: str | None) -> dict:
     return out
 
 
-def match_player(name: str | None, ctx: dict, league: str | None = None) -> tuple[str, str] | None:
-    """Fuzzy-match a name the owner typed ("mitchell", "AD") to (league, exact roster name)."""
+def player_leagues(name: str | None, ctx: dict) -> list[str]:
+    """Leagues where the typed name matches a roster player (used to ask 'which league?')."""
+    return sorted({lg for lg in ctx["leagues"] if match_player(name, ctx, lg, _any_league=True)})
+
+
+def match_player(name: str | None, ctx: dict, league: str | None = None,
+                 _any_league: bool = False) -> tuple[str, str] | None:
+    """Fuzzy-match a name the owner typed ("mitchell", "AD") to (league, exact roster name).
+    None when no match, or when the same player is on rosters in two leagues and no league was
+    named (Lamar Jackson in both cousin leagues): the caller asks which league."""
     if not name:
         return None
     pool = [(lg, p["name"]) for lg, v in ctx["leagues"].items()
@@ -114,7 +143,11 @@ def match_player(name: str | None, ctx: dict, league: str | None = None) -> tupl
     if not hits:
         close = difflib.get_close_matches(low, [x[1].lower() for x in pool], n=1, cutoff=0.75)
         hits = [x for x in pool if close and x[1].lower() == close[0]]
-    return hits[0] if len({h[1] for h in hits}) == 1 else None
+    if len({h[1] for h in hits}) != 1:
+        return None
+    if len({h[0] for h in hits}) > 1 and not _any_league:
+        return None
+    return hits[0]
 
 
 # ---------------------------------------------------------------- acting
@@ -133,24 +166,65 @@ def _set_rule(data_dir: Path, league: str, rule: str, player: str, week: int | N
     _save(data_dir / "preferences.json", prefs)
 
 
-def _do(action: str, aid: str, cfg, store: PendingStore, approve_fn) -> str:
+def _do(action: str, aid: str, cfg, store: PendingStore, approve_fn, scope: set[str] | None = None) -> str:
+    from .cli import reject
     try:
+        if not _in_scope(store.get(aid).league, scope):
+            return f"No pending action #{aid}."     # another owner's league: not this sender's to act on
         if action == "reject":
-            store.get(aid)
-            store.set_status(aid, "rejected")
-            return f"#{aid} rejected. Nothing sent."
+            return reject(aid, store)[1]
         return approve_fn(aid, cfg, store)[1]
     except KeyError:
         return f"No pending action #{aid}."
 
 
+_VERB = {"approve": "approve", "yes": "approve", "y": "approve", "ok": "approve", "reject": "reject",
+         "no": "reject", "n": "reject"}
+_PAIR = re.compile(r"#?(\d+)\s*[:=-]?\s*(approve|reject|yes|no|ok|y|n)\b|(approve|reject)\s+#?(\d+)", re.I)
+_GLUE = re.compile(r"^[\s,;&.]*(and\b)?[\s,;&.]*$", re.I)
+_LIST = re.compile(r"^\s*(approve|reject)\s+#?\d+(\s*(,|and|&|\s)\s*#?\d+)+\s*$", re.I)
+
+
+def parse_multi(text: str) -> list[tuple[str, str]] | None:
+    """Explicit replies about several actions, decided by plain code (no LLM):
+    '4 yes 5 no', '4 approve, 5 reject', 'approve 4 and 5'. Every number must have its own verb
+    (or share the one leading verb); anything looser returns None and goes to the normal path."""
+    t = (text or "").strip()
+    if _LIST.match(t):
+        verb = t.split()[0].lower()
+        return [(verb, n) for n in re.findall(r"\d+", t)]
+    pairs, pos = [], 0
+    for m in _PAIR.finditer(t):
+        if not _GLUE.match(t[pos:m.start()]):
+            return None                           # unexplained words in between
+        if m.group(1):
+            pairs.append((_VERB[m.group(2).lower()], m.group(1)))
+        else:
+            pairs.append((m.group(3).lower(), m.group(4)))
+        pos = m.end()
+    if not _GLUE.match(t[pos:]) or len(pairs) < 2 or len({p[1] for p in pairs}) != len(pairs):
+        return None
+    return pairs
+
+
+def _named_in_text(aid: str | None, text: str) -> bool:
+    """True only if the owner literally typed this action number. The LLM may label intent, but
+    it must never be the one choosing WHICH action gets sent."""
+    return bool(aid) and re.search(rf"(?<!\d)#?{re.escape(str(aid))}(?!\d)", text or "") is not None
+
+
 def respond(sender: str, text: str, cfg, store: PendingStore, llm, approve_fn,
-            answer_fn=None, data_dir: Path = DATA) -> str | None:
-    """Returns the reply to text back, or None to stay quiet."""
+            answer_fn=None, data_dir: Path = DATA, sent_at: dt.datetime | None = None) -> str | None:
+    """Returns the reply to text back, or None to stay quiet.
+    sent_at: when the owner sent the text. A yes/no written BEFORE the bot asked its question
+    (both waiting in the same poll) is not an answer to that question."""
     from .notify import parse_reply
+    scope = sender_leagues(sender, cfg)
     state = _load(data_dir / "chat_state.json", {})
     awaiting = state.get(sender)
     if awaiting and _now() - dt.datetime.fromisoformat(awaiting["asked"]) > dt.timedelta(hours=AWAIT_HOURS):
+        awaiting = None
+    if awaiting and sent_at is not None and sent_at < dt.datetime.fromisoformat(awaiting["asked"]):
         awaiting = None
 
     def ask(action: str, aid: str) -> str:
@@ -166,9 +240,13 @@ def respond(sender: str, text: str, cfg, store: PendingStore, llm, approve_fn,
     fast = parse_reply(text)                      # exact "approve 4" needs no LLM
     if fast:
         clear_wait()
-        return _do(fast[0], fast[1], cfg, store, approve_fn)
+        return _do(fast[0], fast[1], cfg, store, approve_fn, scope)
+    multi = parse_multi(text)                     # "4 yes 5 no": explicit, also no LLM
+    if multi:
+        clear_wait()
+        return "\n".join(_do(act, aid, cfg, store, approve_fn, scope) for act, aid in multi)
 
-    ctx = build_context(store, data_dir)
+    ctx = build_context(store, data_dir, scope)
     it = parse_intent(llm(_prompt(text, ctx, awaiting)))
     intent, conf = it["intent"], it["confidence"]
     open_ids = [p["id"] for p in ctx["pending"]]
@@ -179,7 +257,7 @@ def respond(sender: str, text: str, cfg, store: PendingStore, llm, approve_fn,
         clear_wait()
         if intent == "no":
             return f"OK, left #{awaiting['id']} alone. Nothing sent."
-        return _do(awaiting["action"], awaiting["id"], cfg, store, approve_fn)
+        return _do(awaiting["action"], awaiting["id"], cfg, store, approve_fn, scope)
 
     if intent in ("approve", "reject"):
         aid = it["action_id"] if it["action_id"] in open_ids else (open_ids[0] if len(open_ids) == 1 else None)
@@ -188,14 +266,18 @@ def respond(sender: str, text: str, cfg, store: PendingStore, llm, approve_fn,
                 return "There's nothing waiting for approval right now."
             listing = "\n".join(f"• #{p['id']}: {p['summary']}" for p in ctx["pending"])
             return f"Which one?\n\n{listing}\n\nReply 'approve N' or 'reject N'."
-        if it["action_id"] == aid and conf >= ACT_CONFIDENCE:
+        if it["action_id"] == aid and conf >= ACT_CONFIDENCE and _named_in_text(aid, text):
             clear_wait()
-            return _do(intent, aid, cfg, store, approve_fn)
+            return _do(intent, aid, cfg, store, approve_fn, scope)
         return ask(intent, aid)                   # guessed the id or not confident: confirm first
 
     if intent in ("start", "bench", "always_start", "never_drop", "never_start", "clear_rule"):
         hit = match_player(it["player"], ctx, it["league"])
         if not hit:
+            where = player_leagues(it["player"], ctx) if not it["league"] else []
+            if len(where) > 1:
+                return (f"{it['player']} is on your roster in {' and '.join(where)}. "
+                        "Which league? Send it again with the league name.")
             typed = f" by \"{it['player']}\"" if it["player"] else ""
             return f"I couldn't tell which player you meant{typed}. Can you send the full name?"
         league, name = hit
@@ -213,8 +295,9 @@ def respond(sender: str, text: str, cfg, store: PendingStore, llm, approve_fn,
     if intent == "trade_idea":
         hit = match_player(it["player"], ctx, it["league"]) if it["player"] else None
         reqs = _load(data_dir / "requests.json", [])
+        league = hit[0] if hit else (it["league"] if it["league"] and _in_scope(it["league"], scope) else None)
         reqs.append({"type": "trade_idea", "player": hit[1] if hit else it["player"],
-                     "league": hit[0] if hit else it["league"], "from": sender, "at": _now().isoformat()})
+                     "league": league, "from": sender, "at": _now().isoformat()})
         _save(data_dir / "requests.json", reqs)
         who = hit[1] if hit else (it["player"] or "your team")
         return f"On it. I'll look at trade options for {who} and text you. Nothing gets proposed without your OK."

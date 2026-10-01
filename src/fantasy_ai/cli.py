@@ -90,17 +90,24 @@ def _prepare(cfg: AppConfig, state, reader, args, research=None) -> dict:
                           signals_cfg=getattr(cfg, "signals", None))
 
 
+LAST_WRITE_ERROR: dict[str, str] = {}    # label -> plain reason of the last failed write this run
+
+
 def _submit(writer: TransactionWriter, payload: dict, send: bool, label: str = "") -> int:
+    LAST_WRITE_ERROR.pop(label, None)
     try:
         res = writer.submit(payload, send=send)
     except OwnTeamViolation as e:
         print(f"REFUSED (own-team guard): {e}")
+        LAST_WRITE_ERROR[label] = f"refused by the own-team guard: {e}"
         return 2
     except PacingStop as e:
         print(f"STOPPED (pacing): {e}")
+        LAST_WRITE_ERROR[label] = str(e)
         return 4
     except WriteRejected as e:
         print(f"ESPN rejected the {label or 'write'}: {e.message}")
+        LAST_WRITE_ERROR[label] = f"ESPN rejected it: {e.message}"
         return 3
     if label:
         print(f"[{label}]")
@@ -116,8 +123,8 @@ def _queue(cfg: AppConfig, lg: LeagueConfig, kind: str, summary_text: str, paylo
         print(f"REFUSED (own-team guard): {e}")
         return 2
     store = _store(args)
-    sig = _pending_signature(payload)
-    if any(_pending_signature(a.payload) == sig for a in store.open_actions()):
+    sig = _pending_signature(payload, lg.name)
+    if any(_pending_signature(a.payload, a.league) == sig for a in store.open_actions()):
         print("Same action is already waiting for approval.")
         return 0
     if not quiet_print:
@@ -165,18 +172,24 @@ def _queue_trade_ideas(cfg: AppConfig, lg: LeagueConfig, state, prefs, args) -> 
     return queued
 
 
-def _pending_signature(payload: dict) -> str:
-    return f"{payload.get('type')}:" + ",".join(f"{i.get('type')}{i.get('playerId')}" for i in payload.get("items", []))
+def _pending_signature(payload: dict, league: str = "") -> str:
+    """Duplicate check key. Player ids are NFL-wide, so the league is part of it: the same
+    free agent can be a good add in two leagues at once."""
+    return f"{league}|{payload.get('teamId')}|{payload.get('type')}:" + \
+        ",".join(f"{i.get('type')}{i.get('playerId')}" for i in payload.get("items", []))
 
 
 def _apply_lineup(cfg: AppConfig, lg: LeagueConfig, writer: TransactionWriter, state, res: LineupResult,
-                  send: bool, args) -> tuple[int, str]:
+                  send: bool, args) -> tuple[int, str, bool]:
     """Send (or dry-run) the lineup request, then the IR request, then queue an IR drop if needed.
-    Returns (rc, status word)."""
+    Returns (rc, status word, ok). ok = every move still listed in res went through (or was
+    dry-run): when only the IR request fails, the IR moves are taken out of res and
+    res.ir_error says why, so the lineup text reports exactly what ESPN saved."""
     rc, status = 0, "no changes"
     if res.moves:
         rc = _submit(writer, lineup_payload(lg.team_id, state.scoring_period, res.moves), send, "lineup")
         status = ("sent" if send else "dry-run") if rc == 0 else f"failed (rc {rc})"
+    lineup_ok = rc == 0
     if res.ir_moves and rc == 0:
         print("\nIR moves go in a separate request after the lineup one (same ROSTER/LINEUP shape, slot 21, as the "
               "IR moves ESPN executed in these leagues' transaction logs); if ESPN rejects it, the lineup is unaffected.")
@@ -184,12 +197,16 @@ def _apply_lineup(cfg: AppConfig, lg: LeagueConfig, writer: TransactionWriter, s
         rc = rc or rc_ir
         if status == "no changes":
             status = ("sent" if send else "dry-run") if rc_ir == 0 else f"failed (rc {rc_ir})"
+        if rc_ir != 0:
+            res.ir_error = LAST_WRITE_ERROR.get("IR") or f"exit code {rc_ir}"
+            res.ir_moves = []
+            lineup_ok = lineup_ok and bool(res.moves)
     if res.ir_drop and res.ir_activate:
         payload = free_agent_payload(lg.team_id, state.scoring_period, drop_id=res.ir_drop.player_id)
         _queue(cfg, lg, "FREEAGENT",
                f"drop {res.ir_drop.name} so {res.ir_activate.name} can come off IR (roster is full).",
                payload, checks_for_add_drop(None, res.ir_drop.player_id), args)
-    return rc, status
+    return rc, status, lineup_ok
 
 
 # ---------------------------------------------------------------- commands
@@ -273,12 +290,15 @@ def cmd_lineup(cfg: AppConfig, args) -> int:
         for m in res.ir_moves:
             print(f"  {m}\n      {m.reason}")
     print()
-    rc, _ = _apply_lineup(cfg, lg, writer, state, res, args.send, args)
+    rc, _, ok = _apply_lineup(cfg, lg, writer, state, res, args.send, args)
     n = _notifier(cfg, lg, args)
-    if n and args.send and rc == 0 and (res.moves or res.ir_moves):
+    if n and args.send and ok and (res.moves or res.ir_moves):
         n.send(notify.msg_lineup_changes(lg.label, res))
     if n and res.pref_skipped:
         n.send(notify.msg_pref_skipped(lg.label, res.pref_skipped))
+    if n and n.failures:
+        print(f"WARNING: {len(n.failures)} text(s) failed to send")
+        rc = rc or 5
     return rc
 
 
@@ -656,20 +676,22 @@ def cmd_score_values(cfg: AppConfig, args) -> int:
 
 
 def cmd_pending(cfg: AppConfig, args) -> int:
-    acts = _store(args).open_actions()
+    store = _store(args)
+    acts = store.open_actions()
     if not acts:
         print("No pending actions.")
     for a in acts:
         print(f"  #{a.id} [{a.kind}] {a.league}: {a.summary} (expires {a.expires[:16]} UTC)")
+    for a in store.all():
+        if a.status == "sending":       # an approve stopped mid-send: result unknown, never resent
+            print(f"  #{a.id} [{a.kind}] {a.league}: STUCK while sending; check ESPN's transactions page")
     return 0
 
 
 def cmd_reject(cfg: AppConfig, args) -> int:
-    store = _store(args)
-    store.get(args.id)
-    store.set_status(args.id, "rejected")
-    print(f"#{args.id} rejected. Nothing was sent.")
-    return 0
+    rc, msg = reject(args.id, _store(args))
+    print(msg)
+    return rc
 
 
 def approve(action_id: str, cfg: AppConfig, store: PendingStore,
@@ -677,17 +699,25 @@ def approve(action_id: str, cfg: AppConfig, store: PendingStore,
     """Re-read, re-check, then send one queued action. Returns (exit code, message)."""
     a = store.get(action_id)
     if a.status != "pending":
-        return 1, f"#{a.id} is {a.status}; nothing sent."
+        return 1, _not_pending(a)
     if a.expired():
-        store.set_status(a.id, "expired")
+        store.transition(a.id, "pending", "expired")
         return 1, f"#{a.id} expired; nothing sent. Re-run the command to queue a fresh one."
-    if reader is None or writer is None:
-        _, reader, writer = _setup(cfg, a.league)
-    state = reader.load()
+    # Claim it first: a second approve (the poller and the CLI at once, or a repeated text) sees
+    # "sending" and stops, so one action can never reach ESPN twice.
+    if not store.transition(a.id, "pending", "sending"):
+        return 1, _not_pending(store.get(a.id))
+    try:
+        if reader is None or writer is None:
+            _, reader, writer = _setup(cfg, a.league)
+        state = reader.load()
+        problems = verify(a.checks, state)
+    except BaseException:
+        store.transition(a.id, "sending", "pending")      # nothing was sent; leave it approvable
+        raise
     if state.scoring_period != a.payload.get("scoringPeriodId"):
         store.set_status(a.id, "aborted")
         return 1, f"#{a.id} aborted: the week changed since it was queued. Nothing sent."
-    problems = verify(a.checks, state)
     if problems:
         store.set_status(a.id, "aborted")
         return 1, f"#{a.id} aborted, the league changed: " + "; ".join(problems) + ". Nothing sent."
@@ -697,12 +727,37 @@ def approve(action_id: str, cfg: AppConfig, store: PendingStore,
         store.set_status(a.id, "aborted")
         return 2, f"REFUSED (own-team guard): {e}"
     except PacingStop as e:
+        store.transition(a.id, "sending", "pending")
         return 4, f"#{a.id} not sent yet: {e}. It stays in the queue."
     except WriteRejected as e:
         store.set_status(a.id, "failed")
         return 3, f"ESPN rejected #{a.id}: {e.message}"
+    except BaseException:
+        store.set_status(a.id, "failed")                  # unknown result: never resend blindly
+        raise
     store.set_status(a.id, "approved")
     return 0, f"#{a.id} sent. {res.message}"
+
+
+def _not_pending(a) -> str:
+    if a.status == "sending":
+        return f"#{a.id} is already being sent; nothing sent twice."
+    if a.status == "approved":
+        return f"#{a.id} was already approved and sent."
+    return f"#{a.id} is {a.status}; nothing sent."
+
+
+def reject(action_id: str, store: PendingStore) -> tuple[int, str]:
+    """Reject only what is still waiting. A sent action can't be un-sent, so never say it was."""
+    a = store.get(action_id)
+    if store.transition(a.id, "pending", "rejected"):
+        return 0, f"#{a.id} rejected. Nothing sent."
+    a = store.get(a.id)
+    if a.status == "approved":
+        return 1, f"#{a.id} was already approved and sent to ESPN, so it can't be rejected now."
+    if a.status == "sending":
+        return 1, f"#{a.id} is being sent right now, so it can't be rejected."
+    return 1, f"#{a.id} is already {a.status}; nothing to reject."
 
 
 def cmd_approve(cfg: AppConfig, args) -> int:
@@ -776,7 +831,13 @@ def cmd_autopilot(cfg: AppConfig, args) -> int:
         elif mode == "catchup":
             continue
         full = mode == "full"
-        n = notify.make_notifier(cfg.notify, lg.owner) if args.notify else None
+        n = None
+        if args.notify:
+            try:
+                n = notify.make_notifier(cfg.notify, lg.owner)
+            except Exception as e:              # texts broken must not stop lineups
+                rc_all = rc_all or 5
+                summary(f"{lg.name}: texts unavailable ({type(e).__name__}); running without them")
         if not lg.fixture_dir:
             if pacer.in_cooldown(lg.name):
                 summary(f"{lg.name}: paused (cooldown)")
@@ -796,11 +857,12 @@ def cmd_autopilot(cfg: AppConfig, args) -> int:
                 except Exception as e:
                     print(f"{lg.label}: value snapshot skipped ({type(e).__name__})")
             send = bool(args.send and cfg.settings.auto_lineup)
-            rc, status = _apply_lineup(cfg, lg, writer, state, res, send, args)
+            rc, status, lineup_ok = _apply_lineup(cfg, lg, writer, state, res, send, args)
             rc_all = rc_all or rc
+            write_error = LAST_WRITE_ERROR.get("lineup") if not lineup_ok else res.ir_error
             if rc == 4 and n:
-                n.send(notify.msg_paused(lg.label, "ESPN pushed back or a write cap was hit"))
-            if n and rc == 0 and (res.moves or res.ir_moves):
+                n.send(notify.msg_paused(lg.label, write_error or "ESPN pushed back or a write cap was hit"))
+            if n and lineup_ok and (res.moves or res.ir_moves):
                 n.send(notify.msg_lineup_changes(lg.label, res, sent=send))
             if n and res.pref_skipped:
                 n.send(notify.msg_pref_skipped(lg.label, res.pref_skipped))
@@ -810,7 +872,12 @@ def cmd_autopilot(cfg: AppConfig, args) -> int:
             queued = _queue_trade_ideas(cfg, lg, state, pr, args) if full else 0
             if full or args.waivers:
                 from .waivers import rank_with_checks
-                existing = {_pending_signature(a.payload) for a in store.open_actions()}
+                # skip what is already waiting, and what the owner already said no to this week
+                # (or that was already sent), so the same idea is not texted again after a reject
+                existing = {_pending_signature(a.payload, a.league) for a in store.open_actions()} | {
+                    _pending_signature(a.payload, a.league) for a in store.all()
+                    if a.status in ("rejected", "approved", "sending")
+                    and a.payload.get("scoringPeriodId") == state.scoring_period}
                 ideas, failures = rank_with_checks(state, limit=2, prefs=pr, cfg=cfg.waivers)
                 for f in failures:
                     print(f"{lg.label}: {f}")
@@ -823,7 +890,7 @@ def cmd_autopilot(cfg: AppConfig, args) -> int:
                     payload = (waiver_payload(lg.team_id, state.scoring_period, s.add.player_id, drop_id, bid=0)
                                if s.kind == "WAIVER" else
                                free_agent_payload(lg.team_id, state.scoring_period, s.add.player_id, drop_id))
-                    if _pending_signature(payload) in existing:
+                    if _pending_signature(payload, lg.name) in existing:
                         continue
                     check_own_team(payload, lg)
                     why = f" ({s.add.reasons[0]})" if s.add.reasons else ""
@@ -839,20 +906,29 @@ def cmd_autopilot(cfg: AppConfig, args) -> int:
                 schedule.record(lg.label, mode, {"moves": moves, "queued": queued, "sent": send})
             if n:
                 beat = "waivers" if (mode == "recheck" and args.waivers) else mode
-                n.send(schedule.heartbeat(lg.label, beat, moves, queued, send and rc == 0,
-                                          None if rc in (0,) else f"exit code {rc}"))
+                n.send(schedule.heartbeat(lg.label, beat, moves, queued, send and lineup_ok,
+                                          None if rc == 0 else (write_error or f"exit code {rc}")))
+            if rc != 0:
+                _operator_alert(cfg, lg, args, write_error or f"exit code {rc}")
         except PacingStop as e:
             rc_all = rc_all or 4
             summary(f"{lg.name}: paused (ESPN pushed back)")
             print(f"{lg.label}: {e}")
             if n:
                 n.send(notify.msg_paused(lg.label, str(e)))
+            _operator_alert(cfg, lg, args, str(e))
         except Exception as e:   # one league failing never stops the others
             rc_all = rc_all or 1
             summary(f"{lg.name}: error ({type(e).__name__})")
             print(f"{lg.label}: error: {e}")
             if n:
                 n.send(schedule.heartbeat(lg.label, mode, 0, 0, False, type(e).__name__))
+            _operator_alert(cfg, lg, args, f"{type(e).__name__}: {e}")
+        if n and n.failures:                    # a text that didn't go out is a failure too
+            rc_all = rc_all or 5
+            summary(f"{lg.name}: {len(n.failures)} text failed to send ({n.failures[0]})"
+                    if len(n.failures) == 1 else
+                    f"{lg.name}: {len(n.failures)} texts failed to send ({n.failures[0]})")
     return rc_all
 
 
@@ -880,9 +956,10 @@ def cmd_poll_telegram(cfg: AppConfig, args) -> int:
 
 
 def cmd_poll_imessage(cfg: AppConfig, args) -> int:
-    """Runs every 2 minutes from launchd. Without Full Disk Access it logs ONE clear line per day
-    and exits 0 (no failure status, no repeated noise) until Ian grants access."""
-    import datetime as _dt
+    """Runs every 2 minutes from launchd. Without Full Disk Access (or on any other poller
+    error) it logs ONE clear line per day and texts Ian once that day, so a broken approval
+    channel never fails silently. Missing access exits 0 (no repeated noise); other errors exit 1."""
+    import os as _os
     import sys as _sys
     from .imessage_poll import ChatDbUnavailable, poll
     from .prefs import data_dir
@@ -890,21 +967,54 @@ def cmd_poll_imessage(cfg: AppConfig, args) -> int:
     try:
         lines = poll(cfg, _store(args))
     except ChatDbUnavailable:
-        today = _dt.date.today().isoformat()
-        warned = marker.read_text().strip() if marker.exists() else ""
-        if warned != today:
-            marker.parent.mkdir(parents=True, exist_ok=True)
-            marker.write_text(today)
-            import os as _os
-            summary(f"poll-imessage: waiting for Full Disk Access for {_os.path.realpath(_sys.executable)} "
+        if _first_today(marker):
+            where = _os.path.realpath(_sys.executable)
+            summary(f"poll-imessage: waiting for Full Disk Access for {where} "
                     "(System Settings > Privacy & Security > Full Disk Access); retrying quietly every 2 min")
+            _alert_ian(cfg, "⚠️ fantasy-ai | Can't read iMessage replies\n\n"
+                            "• Approvals by text are NOT working: no Full Disk Access for the poller\n"
+                            f"• Fix: System Settings > Privacy & Security > Full Disk Access, add {where}\n"
+                            "• Until then use fai approve N in the terminal")
         return 0
+    except Exception as e:
+        if _first_today(data_dir() / "imessage_error_warned"):
+            _alert_ian(cfg, f"⚠️ fantasy-ai | iMessage poller error\n\n• {type(e).__name__}; "
+                            "approvals by text may not work. See data/poll-imessage.log")
+        raise
     if marker.exists():
         marker.unlink()
         summary("poll-imessage: Full Disk Access works now; reading replies")
     for line in lines:
         summary(line)
     return 0
+
+
+def _operator_alert(cfg: AppConfig, lg: LeagueConfig, args, why: str) -> None:
+    """Problems in the cousin's leagues also go to Ian: the cousin can't refresh cookies or fix
+    the Mac, so an error texted only to him is an error nobody who can fix it sees."""
+    if getattr(args, "notify", False) and lg.owner != "ian":
+        _alert_ian(cfg, f"⚠️ fantasy-ai | {lg.label} run problem\n\n• {why[:300]}")
+
+
+def _first_today(marker) -> bool:
+    """True once per calendar day per marker file (and records it)."""
+    import datetime as _dt
+    today = _dt.date.today().isoformat()
+    if (marker.read_text().strip() if marker.exists() else "") == today:
+        return False
+    marker.parent.mkdir(parents=True, exist_ok=True)
+    marker.write_text(today)
+    return True
+
+
+def _alert_ian(cfg: AppConfig, text: str) -> None:
+    """Best-effort heads-up to Ian (owner 'ian') about the bot itself. Never raises."""
+    try:
+        n = notify.make_notifier(cfg.notify, "ian")
+        if n.send(text) == 0:
+            summary("could not text Ian about it")
+    except Exception as e:
+        summary(f"could not text Ian about it ({type(e).__name__})")
 
 
 def cmd_state(cfg: AppConfig, args) -> int:

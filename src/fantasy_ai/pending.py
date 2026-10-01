@@ -9,7 +9,9 @@ shape has never been captured (RESEARCH.md).
 """
 from __future__ import annotations
 
+import contextlib
 import datetime as dt
+import fcntl
 import json
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
@@ -31,7 +33,7 @@ class PendingAction:
     created: str
     expires: str
     checks: dict = field(default_factory=dict)
-    status: str = "pending"   # pending / approved / rejected / expired / aborted / failed
+    status: str = "pending"   # pending / sending / approved / rejected / expired / aborted / failed
 
     def expired(self, now: dt.datetime | None = None) -> bool:
         now = now or dt.datetime.now(dt.timezone.utc)
@@ -53,6 +55,18 @@ class PendingStore:
         tmp.write_text(json.dumps(data, indent=1))
         tmp.replace(self.path)
 
+    @contextlib.contextmanager
+    def _locked(self):
+        """One writer at a time across processes (autopilot, the iMessage poller and the CLI
+        all read-modify-write this file; without a lock one can undo another's status change)."""
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        with open(self.path.with_suffix(".lock"), "a") as fh:
+            fcntl.flock(fh, fcntl.LOCK_EX)
+            try:
+                yield
+            finally:
+                fcntl.flock(fh, fcntl.LOCK_UN)
+
     def all(self) -> list[PendingAction]:
         return [PendingAction(**a) for a in self._load()["actions"]]
 
@@ -67,31 +81,51 @@ class PendingStore:
 
     def add(self, league: str, kind: str, summary: str, payload: dict, checks: dict,
             now: dt.datetime | None = None) -> PendingAction:
-        data = self._load()
-        now = now or dt.datetime.now(dt.timezone.utc)
-        a = PendingAction(
-            id=str(data["next_id"]), league=league, kind=kind, summary=summary, payload=payload,
-            created=now.isoformat(), expires=(now + dt.timedelta(hours=EXPIRY_HOURS.get(kind, 24))).isoformat(),
-            checks=checks,
-        )
-        data["next_id"] += 1
-        data["actions"].append(asdict(a))
-        self._save(data)
+        with self._locked():
+            data = self._load()
+            now = now or dt.datetime.now(dt.timezone.utc)
+            a = PendingAction(
+                id=str(data["next_id"]), league=league, kind=kind, summary=summary, payload=payload,
+                created=now.isoformat(), expires=(now + dt.timedelta(hours=EXPIRY_HOURS.get(kind, 24))).isoformat(),
+                checks=checks,
+            )
+            data["next_id"] += 1
+            data["actions"].append(asdict(a))
+            self._save(data)
         return a
 
     def set_status(self, action_id: str, status: str) -> None:
-        data = self._load()
-        for a in data["actions"]:
-            if a["id"] == str(action_id):
-                a["status"] = status
-        self._save(data)
+        with self._locked():
+            data = self._load()
+            for a in data["actions"]:
+                if a["id"] == str(action_id):
+                    a["status"] = status
+            self._save(data)
+
+    def transition(self, action_id: str, frm: str, to: str) -> bool:
+        """Atomically move one action from status `frm` to `to`. False if it was not in `frm`
+        (someone else already approved, rejected or is sending it). This is what makes
+        approve and reject safe to run twice, or from two places at once."""
+        with self._locked():
+            data = self._load()
+            for a in data["actions"]:
+                if a["id"] == str(action_id):
+                    if a["status"] != frm:
+                        return False
+                    a["status"] = to
+                    self._save(data)
+                    return True
+        raise KeyError(f"No pending action #{action_id}")
 
 
 # ---------------------------------------------------------------- preconditions
 
 def checks_for_add_drop(add_id: int | None, drop_id: int | None) -> dict:
-    return {"unrostered": [add_id] if add_id else [], "mine": [drop_id] if drop_id else [],
-            "unlocked": [drop_id] if drop_id else []}
+    out = {"unrostered": [add_id] if add_id else [], "mine": [drop_id] if drop_id else [],
+           "unlocked": [drop_id] if drop_id else []}
+    if add_id and not drop_id:
+        out["room"] = True      # an add with no drop needs an open roster spot at send time
+    return out
 
 
 def checks_for_trade(give_ids: list[int], get_ids: list[int], partner_team_id: int) -> dict:
@@ -110,8 +144,16 @@ def verify(checks: dict, state: LeagueState) -> list[str]:
         if pid in mine and mine[pid].locked:
             problems.append(f"{mine[pid].name} is locked (game started)")
     for pid in checks.get("unrostered", []):
-        if pid in rostered:
+        if pid in mine:
+            problems.append(f"{mine[pid].name} is already on your roster")
+        elif pid in rostered:
             problems.append(f"player {pid} was already picked up by team {rostered[pid]}")
+    if checks.get("room"):
+        from .slots import IR
+        limit = sum(c for s, c in state.slot_counts.items() if s != IR)
+        active = sum(1 for p in state.roster if not p.on_ir_slot)
+        if active >= limit:
+            problems.append(f"your roster is full ({active} of {limit}), so an add with no drop has no spot")
     for team_id, ids in checks.get("partner", {}).items():
         for pid in ids:
             if rostered.get(pid) != int(team_id):

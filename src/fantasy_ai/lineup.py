@@ -53,6 +53,7 @@ class LineupResult:
     ir_drop: Player | None = None          # roster full: suggested drop so ir_activate can come off IR
     ir_activate: Player | None = None
     pref_skipped: list[str] = field(default_factory=list)   # owner requests we could not honor
+    ir_error: str | None = None            # the IR request failed (lineup moves may still be saved)
 
     @property
     def gain(self) -> float:

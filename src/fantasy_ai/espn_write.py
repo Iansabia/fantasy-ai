@@ -272,8 +272,11 @@ class TransactionWriter:
             resp = self._post(url, payload)
         except (httpx.TimeoutException, httpx.TransportError) as e:
             # Unknown state: read the roster back. Never resend here.
-            applied = self._applied(payload)
             self.pacer.record_write(self.cfg.name)
+            try:
+                applied = self._applied(payload)
+            except Exception:                   # read-back failed too: the result is unknown
+                applied = None
             if applied:
                 return WriteResult(True, url, payload, None, "Network error, but the roster shows the change went through.")
             if applied is False:
@@ -283,8 +286,14 @@ class TransactionWriter:
                                          "Check the league's transactions page; do not resend blindly.") from e
         self.pacer.record_write(self.cfg.name)
         status = resp.get("status", "")
-        applied = self._applied(payload)
         msg = f"ESPN status: {status or 'unknown'}."
+        try:
+            applied = self._applied(payload)
+        except Exception as e:
+            # The POST already succeeded. A failed read-back must not turn into "not sent"
+            # (callers would put the action back in the queue and could send it twice).
+            applied = None
+            msg += f" Sent, but the read-back failed ({type(e).__name__}); check the roster on ESPN."
         if applied is False:
             msg += " WARNING: read-back does not match the request; check the roster on ESPN."
         elif applied:

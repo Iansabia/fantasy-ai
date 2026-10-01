@@ -119,8 +119,12 @@ def _fit(text: str) -> str:
 def waiver_text(state, s) -> str:
     from .experts import caution, overrated
     add, d = s.add, s.drop
-    parts = f"lineup {s.lineup_gain:+.1f} (starts {s.starts_add} of 3)" + (
-        f", rest-of-season value {s.ros_term:+.1f}" if s.ros_term else "")
+    # the parts are shown so they add up to the gain exactly (each rounded alone, 1.45 + 2.54
+    # would read 1.4 + 2.5 under a 4.0 total)
+    ros_part = round(s.gain - round(s.lineup_gain, 1), 1) if s.ros_term else 0.0
+    lineup_part = round(s.gain - ros_part, 1)
+    parts = f"lineup {lineup_part:+.1f} (starts {s.starts_add} of 3)" + (
+        f", rest-of-season value {ros_part:+.1f}" if s.ros_term else "")
     gain_line = f"gain {s.gain:+.1f} pts over 3 wks: {parts}"     # the SAME number as the verdict
     pros = [gain_line if s.gain > 0 else None]
     if s.starts_add:
@@ -130,8 +134,12 @@ def waiver_text(state, s) -> str:
     ex_pro, ex_con = _expert_side(state, [add], [d] if d is not None else [])
     if ex_pro and not overrated(add, state):
         pros.append(ex_pro)
-    if d is not None and s.add_value > s.drop_value:
-        pros.append(f"rest of season {s.add_value:.0f} vs {s.drop_value:.0f}")
+    if d is not None and s.ros_term > 0:
+        # only when the rest-of-season edge counted in the gain, and in the units it counted in
+        # (raw "95 vs 8" read as a pro even when both were replacement level and it added 0)
+        av = s.add_vorp if s.add_vorp is not None else s.add_value
+        dv = s.drop_vorp if s.drop_vorp is not None else s.drop_value
+        pros.append(f"rest of season {av:.0f} vs {dv:.0f} above replacement")
     cons = []
     if d is not None:
         cons += _thin(state, {d.player_id}, [add], [d.position])
