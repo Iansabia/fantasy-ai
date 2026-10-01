@@ -215,3 +215,13 @@ def test_reader_fetches_each_view_once_per_run(tmp_path):
     assert calls == [1, 2] and c.slept == [4]          # one gap, before the 2nd real read
     r._fetch("league", lambda: calls.append(3) or {}, fresh=True)   # read-back after a write is fresh
     assert calls == [1, 2, 3]
+
+
+def test_second_projection_compares_sleeper_with_raw_espn_not_injury_cut():
+    s = make_state([b.entry(b.player(1, "Lamar Q", "QB", 21.14), 0)])
+    p = s.find_player("Lamar Q")
+    p.base_proj_week, p.proj_week = 21.14, 13.40           # news cut him to x0.634
+    ctx = WeekContext(week=4, second_proj={1: 22.3})
+    f = next(f for f in score.score_factors(p, ctx, score.merged_config(None)) if f.name == "second projection")
+    assert abs(f.multiplier - (1 + (22.3 / 21.14 - 1) * 0.5)) < 1e-6       # ~x1.027, not x1.15
+    assert "vs ESPN 21.1" in f.reason

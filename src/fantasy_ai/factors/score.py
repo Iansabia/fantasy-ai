@@ -66,9 +66,12 @@ def score_factors(p: Player, ctx: WeekContext, cfg: dict) -> list[Factor]:
 
     c = cfg["second_projection"]
     other = ctx.second_proj.get(p.player_id)
-    if other is not None and p.proj_week > 0:
-        m = 1 + _clamp((other / p.proj_week - 1) * c["weight"], c["cap"])
-        out.append(Factor("second projection", m, f"Sleeper projects {other:.1f} vs ESPN {p.proj_week:.1f}"))
+    # Sleeper projects a player as if he plays, so compare it with ESPN's RAW projection, not the
+    # news/injury-cut one (that would partly undo the injury discount).
+    espn_raw = p.base_proj_week if p.base_proj_week is not None else p.proj_week
+    if other is not None and espn_raw > 0:
+        m = 1 + _clamp((other / espn_raw - 1) * c["weight"], c["cap"])
+        out.append(Factor("second projection", m, f"Sleeper projects {other:.1f} vs ESPN {espn_raw:.1f} (both if he plays)"))
 
     if game:
         c = cfg["matchup"]
