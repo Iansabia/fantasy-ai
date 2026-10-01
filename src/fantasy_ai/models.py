@@ -38,6 +38,8 @@ class Player:
     own_week: float | None = None             # set by ownership.apply
     own_3wk: float | None = None
     hype: object | None = None                # hype.HypeResult (substance vs hype label)
+    trend: object | None = None               # trend.Trend (data-fitted usage momentum)
+    ecr: dict | None = None                   # expert consensus ranks (experts.py)
     market_value: float | None = None         # FantasyCalc redraft value (market.py)
     market_rank: int | None = None
     market_trend: int | None = None

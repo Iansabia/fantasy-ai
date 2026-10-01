@@ -48,6 +48,7 @@ DEFAULTS = {
 }
 MIN_GAIN = DEFAULTS["min_gain_free_agent"]
 DEPTH_SHARE = 0.25
+UPTREND_MARGIN = 5.0   # dropping a player trending up hard needs threshold + this and a better 3-week outlook
 SURPLUS_SHARE = 0.05   # beyond useful depth still has some value (trades, injuries), so a 115-ROS
                        # surplus WR is never treated as equal to a 9-ROS one
 
@@ -132,7 +133,8 @@ def week_worth(p: Player, state: LeagueState, k: int, cfg: dict) -> float:
     back = 0.7 if (k == 1 and (p.is_out() or p.news_out)) else 1.0
     h = getattr(p, "hype", None)
     fut = h.future_mult if h is not None else 1.0          # fill-ins lose credit once the starter returns
-    return round(p.per_game() * m * back * bump * fut, 2)
+    from .trend import next3
+    return round(p.per_game() * m * back * bump * fut * next3(p), 2)   # fitted usage momentum
 
 
 def _best(players: list[Player], state: LeagueState, k: int, cfg: dict, cache: dict) -> tuple[float, int, set[int]]:
@@ -327,6 +329,11 @@ def evaluate_add(state: LeagueState, add: Player, prefs=None, cfg: dict | None =
         lines.insert(0, hl)
     if d is not None and getattr(d, "hype", None) is not None and d.hype.label in ("Fading", "Hype only", "Sell high"):
         lines.append(hype_line(d))
+    tr_add, tr_drop = getattr(add, "trend", None), getattr(d, "trend", None) if d is not None else None
+    if tr_add is not None and tr_add.label != "flat":
+        lines.append(f"{add.name}: {tr_add.text}")
+    if tr_drop is not None and tr_drop.label != "flat":
+        lines.append(f"drop {d.name}: {tr_drop.text}")
     from .ownership import own_note
     note = own_note(add)
     if note and len(lines) < 4:
@@ -366,6 +373,10 @@ def check_suggestion(state: LeagueState, s: WaiverSuggestion, status: dict[int, 
         fills_need = s.starts_add > 0 and s.starts_drop == 0
         dv = s.drop_vorp if s.drop_vorp is not None else s.drop_value
         av = s.add_vorp if s.add_vorp is not None else s.add_value
+        from .trend import HARD_UP, next3
+        if next3(s.drop) - 1 >= HARD_UP and not (s.gain >= s.threshold + UPTREND_MARGIN and s.next3_add > s.next3_drop):
+            fails.append(f"{s.drop.name} is trending up hard ({next3(s.drop) - 1:+.0%} next 3 wks) and "
+                         f"{s.add.name} does not clearly beat him")
         if dv > av and s.next3_drop > s.next3_add and not fills_need:
             fails.append(f"{s.drop.name} is worth more than {s.add.name} both rest of season above replacement "
                          f"({dv:.0f} vs {av:.0f}) and over 3 weeks ({s.next3_drop:.1f} vs {s.next3_add:.1f})")

@@ -6,8 +6,8 @@ Sources (all free, nflverse / ffverse):
   load_ff_opportunity(season)          expected fantasy points (xFP) from ffverse's volume model
   load_injuries(season)                weekly report_status / practice_status
   load_player_stats(prev, "reg")       last season's per-game baseline
-Not available for the current season: route participation (nflverse participation stops at 2025),
-red-zone / goal-line splits (would need full play-by-play; skipped to keep runs light).
+  load_pbp(season)                     red-zone opportunity share (targets + carries inside the 20)
+Not available for the current season: route participation (nflverse participation stops at 2025).
 
 Everything is turned into plain dicts (UsageData) so the hype model runs on fixtures in tests.
 """
@@ -63,12 +63,33 @@ def load(season: int, cache_dir: Path | None = None) -> UsageData | None:
         prev = nfl.load_player_stats(season - 1, summary_level="reg").to_dicts()
     except Exception:
         prev = []
-    return build(season, stats, snaps, opp, inj, prev)
+    try:
+        pbp = nfl.load_pbp(season).select(["season_type", "week", "posteam", "yardline_100", "pass_attempt",
+                                           "rush_attempt", "receiver_player_id", "rusher_player_id"]).to_dicts()
+    except Exception:
+        pbp = []
+    return build(season, stats, snaps, opp, inj, prev, pbp)
+
+
+def red_zone(pbp: list[dict]) -> tuple[dict, dict]:
+    """(team, week) -> red-zone pass+rush plays; (player_id, week) -> his targets+carries there."""
+    team, pl = {}, {}
+    for p in pbp or []:
+        if p.get("season_type") not in ("REG", None) or p.get("yardline_100") is None or p["yardline_100"] > 20:
+            continue
+        if not (p.get("pass_attempt") == 1 or p.get("rush_attempt") == 1):
+            continue
+        team[(p["posteam"], p["week"])] = team.get((p["posteam"], p["week"]), 0) + 1
+        who = p.get("receiver_player_id") if p.get("pass_attempt") == 1 else p.get("rusher_player_id")
+        if who:
+            pl[(who, p["week"])] = pl.get((who, p["week"]), 0) + 1
+    return team, pl
 
 
 def build(season: int, stats: list[dict], snaps: list[dict], opp: list[dict], inj: list[dict],
-          prev: list[dict]) -> UsageData:
+          prev: list[dict], pbp: list[dict] | None = None) -> UsageData:
     """Pure: raw nflverse rows -> UsageData. Carry share is computed from team carries."""
+    rz_team, rz_pl = red_zone(pbp or [])
     team_carries: dict[tuple[str, int], float] = {}
     for r in stats:
         if r.get("season_type", "REG") != "REG":
@@ -94,6 +115,7 @@ def build(season: int, stats: list[dict], snaps: list[dict], opp: list[dict], in
             "carries": float(r.get("carries") or 0),
             "carry_share": (float(r.get("carries") or 0) / tc) if tc else 0.0,
             "snap_pct": snap.get((name, team, wk)),
+            "rz_share": (rz_pl.get((r.get("player_id"), wk), 0) / rz_team[(team, wk)]) if rz_team.get((team, wk)) else 0.0,
             "fpts": float(r.get("fantasy_points_ppr") or 0),
             "xfp": xfp.get((name, team, wk)),
         })

@@ -52,10 +52,17 @@ def prepare(state: LeagueState, reader, factor_cfg: dict | None = None, *, news:
         rows = market.fetch(client or PoliteClient(), len(state.teams),
                             2 if state.slot_counts.get(7) else 1, getattr(reader.cfg, "ppr", 1.0))
         info["market"] = market.attach(state, rows)
+        from . import experts
+        try:
+            info["experts"] = experts.attach(state, experts.fetch(client or PoliteClient()))
+        except Exception:
+            info["experts"] = 0
     from . import hype, usage_data
     usage = None if offline else usage_data.load(state.year)
     hype.apply(state, usage, hype_cfg)
     info["hype"] = usage is not None
+    from . import trend
+    info["trend"] = trend.apply(state, usage)
     from . import gametime
     info["gametime"] = gametime.apply(state, reader.raw_pro_teams(), schedule_cfg)
     if factors:

@@ -193,6 +193,32 @@ def _apply_lineup(cfg: AppConfig, lg: LeagueConfig, writer: TransactionWriter, s
 
 # ---------------------------------------------------------------- commands
 
+def _need_block(state, positions, partner_id=None, short=False) -> list[str]:
+    """Position-need report lines for our team (and a trade partner) at the given positions."""
+    from . import posneed
+    out = []
+    for pos in [x for x in posneed.POSITIONS if x in positions]:
+        out += posneed.lines(state, state.my_team_id, pos, "ours", short)
+        if partner_id is not None:
+            out += posneed.lines(state, partner_id, pos, state.teams[partner_id].name.strip(), short)
+    return out
+
+
+def _need_text(state, positions, partner_id=None) -> str:
+    """Short need summary for texts / queued pitches."""
+    from . import posneed
+    bits = [f"ours {posneed.summary(state, state.my_team_id, pos)}" for pos in posneed.POSITIONS if pos in positions]
+    if partner_id is not None:
+        bits += [f"theirs {posneed.summary(state, partner_id, pos)}" for pos in posneed.POSITIONS if pos in positions]
+    return "Need: " + "; ".join(bits)
+
+
+def _expert_line(ps, state) -> str:
+    from .experts import note, our_pos_ranks
+    ranks = our_pos_ranks(state)
+    return "; ".join(f"{p.name}: {note(p, state, ranks) or 'no ECR'}" for p in ps)
+
+
 def cmd_leagues(cfg: AppConfig, args) -> int:
     print(f"Config: {cfg.source or 'LEAGUES_YAML'}")
     for lg in cfg.leagues:
@@ -284,6 +310,11 @@ def cmd_explain(cfg: AppConfig, args) -> int:
         print(f"  hype vs substance      {p.hype.text}, ROS x{p.hype.ros_mult:.2f}, future weeks x{p.hype.future_mult:.2f}")
         for r in p.hype.reasons:
             print(f"      - {r}")
+    if getattr(p, "trend", None) is not None:
+        print(f"  usage trend (fitted)   {p.trend.text}; ROS x{p.trend.ros:.3f}")
+    from .experts import note
+    if note(p, state):
+        print(f"  experts                {note(p, state)}")
     if p.status in ("FREEAGENT", "WAIVERS"):
         from .waivers import SPECIAL, evaluate_add, merged, swap_view
         w = evaluate_add(state, p, _prefs(lg, state), cfg.waivers)
@@ -332,6 +363,10 @@ def cmd_waivers(cfg: AppConfig, args) -> int:
         print()
     for f in failures:
         print(f"WARNING: {f}")
+    positions = {x.position for s_ in sugg for x in (s_.add, s_.drop) if x is not None} or {"QB", "RB", "WR", "TE"}
+    print(f"{lg.label}: position check, week {state.scoring_period} (is the slot really a problem?)")
+    for line in _need_block(state, positions, short=not sugg):
+        print(f"  {line}")
     print(f"{lg.label}: waiver ideas, week {state.scoring_period} (approval required)")
     if not sugg:
         print("  No free agent improves your team by enough to matter (claims need more, they cost priority).")
@@ -339,6 +374,7 @@ def cmd_waivers(cfg: AppConfig, args) -> int:
         print(f"  {i}. [{s.kind}] {s.reason}")
         for w in s.why:
             print(f"       - {w}")
+        print(f"       - experts: {_expert_line([x for x in (s.add, s.drop) if x is not None], state)}")
     from .waivers import streamers
     streams = streamers(state, prefs=_prefs(lg, state), cfg=cfg.waivers)
     if streams:
@@ -360,7 +396,9 @@ def cmd_waivers(cfg: AppConfig, args) -> int:
         payload = waiver_payload(lg.team_id, state.scoring_period, s.add.player_id, drop_id, bid=bid)
     else:
         payload = free_agent_payload(lg.team_id, state.scoring_period, s.add.player_id, drop_id)
-    summary_text = f"add {s.add.name}, drop {s.drop.name if s.drop else 'nobody'}, +{s.gain:.1f} pts over 3 wks. " + "; ".join(s.why[:2])
+    summary_text = (f"add {s.add.name}, drop {s.drop.name if s.drop else 'nobody'}, +{s.gain:.1f} pts over 3 wks. "
+                    + "; ".join(s.why[:2]) + ". "
+                    + _need_text(state, {x.position for x in (s.add, s.drop) if x is not None}))
     print()
     return _queue(cfg, lg, s.kind, summary_text, payload, checks_for_add_drop(s.add.player_id, drop_id), args)
 
@@ -381,6 +419,10 @@ def cmd_trade(cfg: AppConfig, args) -> int:
     except ValueError as e:
         raise SystemExit(str(e))
     print(f"{lg.label}: trade check, week {state.scoring_period}")
+    print("Position check (is the slot really a problem?):")
+    for line in _need_block(state, {p.position for p in give + get}, ev.partner.team_id):
+        print(f"  {line}")
+    print(f"Experts vs us: {_expert_line(give + get, state)}")
     from .market import fc_value
     fc = lambda ps: (f"{sum(fc_value(p) for p in ps):.0f}" if ps and all(fc_value(p) for p in ps) else "n/a")
     for side in (ev.me, ev.partner):
@@ -402,7 +444,8 @@ def cmd_trade(cfg: AppConfig, args) -> int:
     give_ids, get_ids = [p.player_id for p in give], [p.player_id for p in get]
     payload = trade_proposal_payload(lg.team_id, ev.partner.team_id, state.scoring_period, give_ids, get_ids)
     summary_text = (f"give {', '.join(p.name for p in give)} get {', '.join(p.name for p in get)} "
-                    f"({ev.partner.team_name}), {ev.me.per_week:+.1f} pts/wk.")
+                    f"({ev.partner.team_name}), {ev.me.per_week:+.1f} pts/wk. "
+                    + _need_text(state, {p.position for p in give + get}, ev.partner.team_id))
     print("\nTrades are proposed only after your approval, never accepted automatically.")
     return _queue(cfg, lg, "TRADE_PROPOSAL", summary_text, payload,
                   checks_for_trade(give_ids, get_ids, ev.partner.team_id), args)
@@ -462,6 +505,9 @@ def cmd_trade_ideas(cfg: AppConfig, args) -> int:
     print(f"{lg.label}: trade ideas, week {state.scoring_period} (nothing is proposed without your approval)")
     for line in teamneeds.strength_summary(prof[state.my_team_id], n):
         print(f"  {line}")
+    print("  Our starters (is the slot really a problem?):")
+    for line in _need_block(state, {"QB", "RB", "WR", "TE"}, short=True):
+        print(f"    {line}")
     ideas = teamneeds.trade_ideas(state, pr, top=args.limit, include_lopsided=args.include_lopsided)
     if not ideas:
         print("  No trade helps both lineups at a position the other team needs while we still win."
@@ -491,6 +537,12 @@ def cmd_trade_ideas(cfg: AppConfig, args) -> int:
         if idea.their_drops:
             print(f"     roster limit: they would drop {', '.join(p.name for p in idea.their_drops)} (counted above)")
         print(f"     why this partner: {idea.why_partner}")
+        print(f"     {_need_text(state, {p.position for p in idea.give + idea.get}, idea.partner_id)}")
+        from .trend import trade_note
+        tn = trade_note(idea.give, idea.get)
+        if tn:
+            print(f"     trend: this trade {tn}")
+        print(f"     experts: {_expert_line(idea.give + idea.get, state)}")
         for p in idea.give + idea.get:
             if hype_line(p) and p.hype.label != "Steady":
                 print(f"     {hype_line(p)}")
@@ -507,7 +559,8 @@ def cmd_trade_ideas(cfg: AppConfig, args) -> int:
         g, r = [p.player_id for p in idea.give], [p.player_id for p in idea.get]
         payload = trade_proposal_payload(lg.team_id, idea.partner_id, state.scoring_period, g, r)
         text = (f"give {', '.join(p.name for p in idea.give)} get {', '.join(p.name for p in idea.get)} "
-                f"({idea.partner}), lineup {idea.our_gain:+.1f} ROS. Pitch: {idea.pitch}")
+                f"({idea.partner}), lineup {idea.our_gain:+.1f} ROS. "
+                f"{_need_text(state, {p.position for p in idea.give + idea.get}, idea.partner_id)}. Pitch: {idea.pitch}")
         print()
         return _queue(cfg, lg, "TRADE_PROPOSAL", text, payload, checks_for_trade(g, r, idea.partner_id), args)
     print("\nRe-run with --propose N to queue one for your approval (fai approve sends it).")
@@ -746,8 +799,10 @@ def cmd_autopilot(cfg: AppConfig, args) -> int:
                         continue
                     check_own_team(payload, lg)
                     why = f" ({s.add.reasons[0]})" if s.add.reasons else ""
+                    need = _need_text(state, {x.position for x in (s.add, s.drop) if x is not None})
                     a = store.add(lg.name, s.kind, f"add {s.add.name}, drop {s.drop.name if s.drop else 'nobody'}, "
-                                  f"+{s.gain:.1f} pts over 3 wks{why}.", payload, checks_for_add_drop(s.add.player_id, drop_id))
+                                  f"+{s.gain:.1f} pts over 3 wks{why}. {need}", payload,
+                                  checks_for_add_drop(s.add.player_id, drop_id))
                     queued += 1
                     if n:
                         n.send(notify.msg_pending(a))

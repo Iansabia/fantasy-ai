@@ -76,4 +76,8 @@ def evaluate_trade(state: LeagueState, give: list[Player], get: list[Player], pr
         verdict = "DECLINE"
     reason = (f"Our starting lineup changes by {me.lineup_delta:+.1f} points rest-of-season "
               f"(value above replacement {me.ros_delta:+.1f}); {them.team_name} changes by {them.lineup_delta:+.1f}.")
+    from .trend import trade_note
+    tn = trade_note(give, get)
+    if tn:
+        reason += f" This trade {tn}."
     return TradeEval(me, them, verdict, reason)

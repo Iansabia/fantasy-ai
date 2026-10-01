@@ -110,6 +110,19 @@ fai report demo
   and a pitch that leads with what the trade fixes for them. `--propose N` queues one for approval.
 - **Scouting** (`fai scout <league>`): every team's rank at QB/RB/WR/TE, holes, surplus, short-term
   needs (starters on bye or out soon) and record, plus "best partner for our QB surplus".
+- **Context for trades and waivers.** Every `fai trade`, `fai trade-ideas` and `fai waivers` output
+  starts with a position check (`posneed.py`): the current starter at each affected position (ours
+  and the partner's), next 3 weeks (worth, opponent, matchup rank, bye), usage trend, injury, ROS
+  value, rank among league starters ("TE 8 of 10") and a verdict: real problem (bottom 3, falling
+  usage, injured, bye within 2 weeks), fine, or strength (top 3). Queued pitches carry a one-line
+  version. Usage momentum (`trend.py`) is fitted on 2023-25 nflverse data (`scripts/fit_trend.py`,
+  held out by season): e.g. +10 points of target share predicts +5.5% points over the next 3
+  weeks for WR/TE, +10 points of snaps +7.1% for RBs; it moves ROS value and future-week worth
+  (not this week's lineup), clipped to +-15%. Trades say when they sell players on an uptrend or
+  buy one on a downtrend; waivers never drop a player trending up hard without a clear win.
+  FantasyPros expert ranks (ECR, PPR: this week + rest of season, `experts.py`) are shown next to
+  our rank with a flag when we differ by more than 10 spots; information only (no history to
+  backtest a blend).
 - **Value over replacement.** Anything that compares players across positions (trade fairness
   fallback and depth credit, calc-compare ranking, waiver drop choice, IR drop, scouting surplus
   order) uses rest-of-season value minus a replacement player at the position (`vorp.py`).

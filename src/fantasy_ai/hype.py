@@ -27,9 +27,10 @@ from .usage_data import UsageData, norm_name, nfl_team
 # Retune from `fai score-values` results (or override per install with config `hype:`).
 # 2026 weeks 1-3 backtest: when a label flipped a pair of players, Fading was right 29-35% of
 # the time, Sell high 25%, Role growing 28-48%, so they no longer move value (labels stay as
-# text). Real breakout / Buy low were closer to even, so they keep a small +5%.
+# text). Buy low (points lagging volume) keeps a small +5%. Real breakout is a usage jump, which
+# the data-fitted trend (trend.py) now prices directly, so it no longer moves value either.
 MULTS = {
-    "Real breakout": (1.05, 1.05), "Role growing": (1.0, 1.0), "Fill-in": (0.85, 0.60),
+    "Real breakout": (1.0, 1.0), "Role growing": (1.0, 1.0), "Fill-in": (0.85, 0.60),
     "Hype only": (0.90, 0.95), "Buy low": (1.05, 1.05), "Sell high": (1.0, 1.0),
     "Steady": (1.0, 1.0), "Fading": (1.0, 1.0),
 }
