@@ -2,11 +2,13 @@
 
 Weekly projection:
   adjusted = base * status_factor * (1 + role) * (1 + sentiment)
-    status  out / ir -> 0 (and the player is benched), doubtful -> 0.1, questionable -> 0.85
-            (same numbers as slots.STATUS_DISCOUNT; a news status replaces ESPN's so it never counts twice)
+    status  out / ir -> 0 (and the player is benched), doubtful -> 0.02, questionable -> 0.67,
+            practice reports -> calibrated play probability (availability.py, by day and
+            full / limited / DNP). Same numbers as slots.STATUS_DISCOUNT; a news status replaces
+            ESPN's so it never counts twice. Before the final run for his game the status part is
+            taken back out (gametime.py: decision deferred).
     role    +-25% max, scaled by confidence
     sentiment/hype  +-15% max, scaled by confidence
-  The questionable discount means a healthy backup within ~15% gets the start.
 Rest-of-season value (waivers, trades):
   ros_multiplier = (1 + role/2) * (1 + buzz_bonus), buzz bonus capped at +10% (drops: -10%).
 Only status signals with confidence >= 0.7 can mark a player out.
@@ -20,11 +22,12 @@ from ..slots import STATUS_DISCOUNT
 from .classify import Signal
 from .sources import Buzz
 
-STATUS_FACTOR = {"out": 0.0, "ir": 0.0, "doubtful": 0.1, "questionable": 0.85, "active": 1.0}
+STATUS_FACTOR = {"out": 0.0, "ir": 0.0, "doubtful": 0.02, "questionable": 0.67, "active": 1.0}
 POSSIBLY_OUT = 0.4   # "out" reported with low confidence
 # expected_to_play target factors. Blended with the ESPN default by confidence:
 #   factor = espn_default + (target - espn_default) * confidence
-PLAY_FACTOR = {"likely": 1.0, "uncertain": 0.6, "unlikely": 0.2}
+# used only when the item gives no practice detail (else availability.play_probability)
+PLAY_FACTOR = {"likely": 0.97, "uncertain": 0.70, "unlikely": 0.25}
 ROLE_CAP, SENT_CAP, BUZZ_CAP = 0.25, 0.15, 0.10
 OUT_CONFIDENCE = 0.7
 
@@ -35,6 +38,7 @@ class Adjustment:
     multiplier: float = 1.0
     news_out: bool = False
     news_status: str | None = None
+    status_factor: float = 1.0        # the game-status part of multiplier (gametime.py can undo it)
     ros_multiplier: float = 1.0
     buzz: float = 0.0
     reasons: list[str] = field(default_factory=list)
@@ -80,7 +84,14 @@ def compute(player: Player, signals: list[Signal], buzz: Buzz | None = None,
             adj.news_status = st
             adj.reasons.append(f"{player.name} reported {st.upper()}{note} ({_cite(status_sig)})")
         else:
-            target, label = ((PLAY_FACTOR[play], f"{play} to play") if play else (STATUS_FACTOR[st], f"listed {st}"))
+            from ..availability import play_probability, practice_day
+            day = practice_day(status_sig.practice_day, status_sig.published) if status_sig.practice else None
+            prob = play_probability(st or player.game_status, status_sig.practice, day) if status_sig.practice else None
+            if prob is not None:
+                what = {"dnp": "did not practice", "limited": "limited in practice", "full": "full practice"}[status_sig.practice]
+                target, label = prob, f"{what} ({day or 'day unknown'}), plays ~{prob:.0%} historically"
+            else:
+                target, label = ((PLAY_FACTOR[play], f"{play} to play") if play else (STATUS_FACTOR[st], f"listed {st}"))
             status_factor = round(base + (target - base) * status_sig.confidence, 3)
             adj.news_status = label
             if status_factor != 1.0 or base != 1.0:
@@ -98,6 +109,7 @@ def compute(player: Player, signals: list[Signal], buzz: Buzz | None = None,
         sent = 0.0
     sent = max(-SENT_CAP, min(SENT_CAP, sent))
 
+    adj.status_factor = status_factor
     adj.multiplier = round(status_factor * (1 + role) * (1 + sent), 3)
 
     adj.buzz = buzz_score(buzz, len(sigs))
@@ -131,6 +143,7 @@ def apply(state: LeagueState, signals: list[Signal], buzz: dict[int, Buzz] | Non
         p.proj_week = round(p.base_proj_week * a.multiplier, 2)
         p.news_out = a.news_out
         p.news_status = a.news_status
+        p.news_status_factor = a.status_factor
         p.ros_multiplier = a.ros_multiplier
         p.buzz = a.buzz
         p.reasons = a.reasons

@@ -49,12 +49,16 @@ def moved(res):
     return {m.name: (m.from_slot, m.to_slot) for m in res.moves}
 
 
-# ---- no news: modest default discount, and the reason says so
+# ---- no news, FINAL run (optimize alone = final-run logic; earlier runs defer, see test_gametime):
+# measured questionable play rate 67%, and the reason says so
 
 def test_league_a_no_news_keeps_healthy_pittman():
     res = optimize(league_a())
     assert "Adonai Mitchell" not in moved(res) and "Michael Pittman Jr." not in moved(res)
-    assert res.target[7] == 23      # Waddle (Q, 11.9 -> 10.1) still beats Gainwell 8.1
+    m = moved(res)
+    assert m["Jaylen Waddle"] == (23, BENCH) and m["Kenny Gainwell"] == (BENCH, 23)   # Q 11.9 x0.67 = 8.0 < 8.1
+    w = next(x for x in res.moves if x.name == "Jaylen Waddle")
+    assert "no news found, default discount" in w.reason
 
 
 def test_league_b_no_news_starts_healthy_mcconkey():
@@ -72,16 +76,19 @@ def test_league_a_positive_news_starts_mitchell():
     adjust.apply(s, [sig(10, "Adonai Mitchell", "likely", "full practice Friday, expected to play")])
     res = optimize(s)
     m = moved(res)
-    assert m["Adonai Mitchell"] == (BENCH, 4) and m["Michael Pittman Jr."] == (4, BENCH)
+    assert m["Adonai Mitchell"][0] == BENCH and m["Adonai Mitchell"][1] in (4, 23)
     r = next(x for x in res.moves if x.name == "Adonai Mitchell").reason
     assert "likely to play: full practice Friday, expected to play (NBC Rotoworld, 2026-10-02)" in r
 
 
-def test_league_b_positive_news_keeps_evans():
+def test_league_b_positive_news_lifts_evans_close_to_full():
     s = league_b()
     adjust.apply(s, [sig(7, "Mike Evans", "likely", "full practice, will play")])
+    evans = s.find_player("Mike Evans")
+    assert evans.lineup_value(4) >= 0.93 * 11.7                     # likely: 0.67 -> ~0.94
     res = optimize(s)
-    assert "Mike Evans" not in moved(res) and res.target[7] == 23
+    # final run: 11.0 expected vs a healthy 11.4, so McConkey edges him; the reason cites the news
+    assert res.target[10] == 23 and "likely to play" in next(x for x in res.moves if x.name == "Mike Evans").reason
 
 
 # ---- negative news: no practice / game-time decision -> bench him
@@ -91,7 +98,7 @@ def test_league_a_negative_news_keeps_mitchell_benched():
     adjust.apply(s, [sig(10, "Adonai Mitchell", "uncertain", "did not practice, game-time decision")])
     res = optimize(s)
     assert "Adonai Mitchell" not in moved(res)
-    assert s.find_player("Adonai Mitchell").lineup_value(4) < 7.0
+    assert s.find_player("Adonai Mitchell").lineup_value(4) < 9.8 * 0.8
 
 
 def test_league_b_negative_news_benches_evans_with_cited_reason():

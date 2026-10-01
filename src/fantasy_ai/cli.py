@@ -86,7 +86,7 @@ def _notifier(cfg: AppConfig, lg: LeagueConfig, args) -> notify.Notifier | None:
 def _prepare(cfg: AppConfig, state, reader, args, research=None) -> dict:
     return engine.prepare(state, reader, cfg.factors, news=not getattr(args, "no_news", False),
                           factors=not getattr(args, "no_factors", False), research=research,
-                          hype_cfg=getattr(cfg, "hype", None))
+                          hype_cfg=getattr(cfg, "hype", None), schedule_cfg=getattr(cfg, "schedule", None))
 
 
 def _submit(writer: TransactionWriter, payload: dict, send: bool, label: str = "") -> int:

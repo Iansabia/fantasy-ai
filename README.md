@@ -35,9 +35,14 @@ fai report demo
   D/ST, K, bench, IR) using each player's `eligibleSlots`, on each player's *worth* (below), not raw
   projection. Anyone on bye, OUT, IR or suspended is benched. Locked players never move. Only
   changed slots are sent, in one atomic request.
-- **Questionable / doubtful:** news decides. "Full practice, expected to play" means little or no
-  discount; "did not practice, game-time decision" means a big one; "ruled out" means zero. With no
-  news found, a modest default applies (questionable counts 85%, doubtful 10%) and the reason says so.
+- **Questionable / doubtful:** if a scheduled run (config `schedule:`) still comes before his
+  kickoff, a questionable starter is NOT benched for injury risk: the haircut is taken back out
+  and the reason says "decision deferred to the final pre-game run" (`gametime.py`). The final
+  run before his game uses a play probability (`availability.py`): measured on 2023-25 nflverse
+  injury reports + snap counts, questionable plays ~67% (full practice 77%, limited 66%, DNP 51%),
+  doubtful ~2%; midweek practice reports (e.g. limited Wednesday ~85%) sit between the final-report
+  rows. News saying "ruled out" means zero. On the Sunday 11:45am run (after 1:00pm inactives) a
+  questionable player who was not ruled out counts as active.
 - **IR:** an INJURY_RESERVE player moves into an open IR slot automatically. A player who is healthy
   but still in the IR slot is activated if there is a roster spot; if not, a drop is suggested and
   waits in the approval queue. IR moves go in a separate request after the lineup, because an IR
@@ -126,8 +131,8 @@ fai report demo
 - **News and buzz** (`src/fantasy_ai/news/`): ESPN player news, NBC/Rotoworld, RotoBaller and
   FantasyPros RSS, Reddit r/fantasyfootball, and Sleeper trending adds/drops. The LLM turns each
   item into a small JSON label (status, role change, sentiment, confidence). Plain code turns
-  labels into **bounded** changes: OUT means 0, questionable is a 15% discount (so a close,
-  healthy backup gets the start), role change at most 25%, hype at most 15%, buzz at most 10% on
+  labels into **bounded** changes: OUT means 0, questionable is a calibrated play probability on
+  the final pre-game run (deferred before that), role change at most 25%, hype at most 15%, buzz at most 10% on
   rest-of-season value. Every change keeps a cited reason ("Q Star listed questionable (ESPN,
   2026-09-30)") that shows up in texts. X and Instagram have no free API and are not scraped;
   they are stubs that can read a list you provide.

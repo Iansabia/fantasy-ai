@@ -3,6 +3,7 @@
 Output per item (validated strictly, anything malformed is dropped):
   {"item": <index>, "player": <name>, "status_change": out|doubtful|questionable|ir|active|null,
    "expected_to_play": likely|uncertain|unlikely|null,
+   "practice": full|limited|dnp|null, "practice_day": wed|thu|fri|sat|null,
    "role_change": -1|0|1, "usage_note": str, "sentiment": -1..1, "confidence": 0..1}
 source_url / source / published are copied from the item by code, not trusted from the LLM.
 """
@@ -16,6 +17,8 @@ from .sources import NewsItem
 
 STATUSES = {"out", "doubtful", "questionable", "ir", "active"}
 PLAY = {"likely", "uncertain", "unlikely"}
+PRACTICE = {"full", "limited", "dnp"}
+PRACTICE_DAYS = {"mon", "tue", "wed", "thu", "fri", "sat", "sun"}
 BATCH = 15
 
 
@@ -32,6 +35,8 @@ class Signal:
     source_url: str
     published: str
     expected_to_play: str | None = None
+    practice: str | None = None           # full / limited / dnp (did not practice)
+    practice_day: str | None = None       # wed / thu / fri ... as stated in the item
 
 
 def _prompt(items: list[NewsItem]) -> str:
@@ -42,7 +47,9 @@ def _prompt(items: list[NewsItem]) -> str:
         "item (int, copy it), player (copy it), status_change (one of out, doubtful, questionable, "
         "ir, active, or null if the item says nothing about game status), expected_to_play (likely "
         "for full practice / expected to play, uncertain for limited or no practice / game-time "
-        "decision, unlikely for trending toward sitting, or null if not covered), role_change (-1 lost "
+        "decision, unlikely for trending toward sitting, or null if not covered), practice (full, "
+        "limited, dnp for did not practice, or null if the item does not report practice), "
+        "practice_day (wed, thu, fri, sat, or null: the day of that practice), role_change (-1 lost "
         "role/snaps, 0 none, 1 gained role/snaps), usage_note (under 15 words, facts only), "
         "sentiment (-1 to 1 for this week's fantasy outlook), confidence (0 to 1 that the item "
         "really says this). Do not recommend starts or sits. Reply with ONLY a JSON array.\n\n"
@@ -81,6 +88,10 @@ def parse_signals(text: str | None, items: list[NewsItem]) -> list[Signal]:
         play = str(play).lower() if play else None
         if play not in PLAY:
             play = None
+        prac = str(r.get("practice") or "").lower() or None
+        prac = prac if prac in PRACTICE else None
+        pday = str(r.get("practice_day") or "").lower()[:3] or None
+        pday = pday if pday in PRACTICE_DAYS else None
         role = r.get("role_change", 0)
         role = role if role in (-1, 0, 1) else 0
         out.append(Signal(
@@ -89,6 +100,7 @@ def parse_signals(text: str | None, items: list[NewsItem]) -> list[Signal]:
             sentiment=_clamp(r.get("sentiment"), -1, 1, 0.0),
             confidence=_clamp(r.get("confidence"), 0, 1, 0.0),
             source=it.source, source_url=it.url, published=it.published, expected_to_play=play,
+            practice=prac, practice_day=pday,
         ))
     return out
 

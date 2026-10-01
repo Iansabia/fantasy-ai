@@ -3,7 +3,11 @@
 Schedule (Eastern time, all leagues):
   Thursday 2:00pm   full run: news, factors, Vegas, IR, waiver ideas, texts
   Saturday 2:00pm   recheck: lineups + IR only, fresh news/injuries, only change what changed
-  Sunday 11:45am    inactive check (optional, OFF unless schedule.sunday_inactive_check: true)
+  Sunday 11:45am    inactive check (optional, OFF unless schedule.sunday_inactive_check: true);
+                    NFL inactives for 1:00pm games come out at 11:30am
+Override the times with config `schedule.runs: {full: "thu 14:00", recheck: "sat 14:00",
+inactives: "sun 11:45"}`. gametime.py uses the same list to decide whether a questionable
+start can wait for a later run.
 NFL week window = Tuesday 00:00 ET to the next Tuesday. If this week's Thursday run is missing
 (laptop asleep, CI outage) and Sunday's 1:00pm ET kickoff has not passed, any autopilot run
 upgrades itself to a full run.
@@ -19,6 +23,36 @@ from .prefs import _load, _save, data_dir
 
 ET = ZoneInfo("America/New_York")
 SLOTS = [("full", 3, 14, 0), ("recheck", 5, 14, 0), ("inactives", 6, 11, 45)]   # (mode, weekday Mon=0, h, m)
+WEEKDAYS = {"mon": 0, "tue": 1, "wed": 2, "thu": 3, "fri": 4, "sat": 5, "sun": 6}
+
+
+def run_slots(cfg: dict | None = None) -> list[tuple[str, int, int, int]]:
+    """Scheduled runs (mode, weekday, hour, minute) from config `schedule:`; the Sunday inactive
+    check only when schedule.sunday_inactive_check is true."""
+    cfg = cfg or {}
+    over = cfg.get("runs") or {}
+    out = []
+    for mode, wd, h, m in SLOTS:
+        if mode in over:
+            day, hm = str(over[mode]).lower().split()
+            hh, mm = hm.split(":")
+            wd, h, m = WEEKDAYS[day[:3]], int(hh), int(mm)
+        if mode == "inactives" and not cfg.get("sunday_inactive_check", False):
+            continue
+        out.append((mode, wd, h, m))
+    return out
+
+
+def upcoming_runs(now: dt.datetime, cfg: dict | None = None) -> list[tuple[str, dt.datetime]]:
+    """Scheduled runs after now, this NFL week and next, soonest first."""
+    out = []
+    for week_shift in (0, 7):
+        base = now + dt.timedelta(days=week_shift)
+        for mode, wd, h, m in run_slots(cfg):
+            t = slot_time(base, wd, h, m)
+            if t > now.astimezone(ET):
+                out.append((mode, t))
+    return sorted(out, key=lambda x: x[1])
 
 
 def _week_start(now: dt.datetime) -> dt.datetime:

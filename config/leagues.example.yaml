@@ -60,6 +60,9 @@ waivers:
   stream_margin: 1.5         # K / D/ST streamer must beat our starter by this much
 
 # Run schedule (Eastern): Thursday 2pm full run, Saturday 2pm recheck. The Sunday 11:45am
-# inactive check is off unless enabled here (and its launchd template / cron is turned on).
+# inactive check (after 1:00pm inactives at 11:30) is off unless enabled here (and its launchd
+# template / cron is turned on). The same run list decides whether a questionable starter can
+# wait for a later run ("decision deferred") or must be decided now (final pre-game run).
 schedule:
   sunday_inactive_check: false
+  # runs: {full: "thu 14:00", recheck: "sat 14:00", inactives: "sun 11:45"}   # optional override

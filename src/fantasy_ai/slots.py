@@ -35,6 +35,8 @@ def slot_name(slot_id: int) -> str:
 
 # Game-status discount for players who MAY play. A questionable player needs a clear
 # margin (about 18% more projection) to start over a healthy one; doubtful is near zero.
-STATUS_DISCOUNT = {"QUESTIONABLE": 0.85, "DOUBTFUL": 0.1}
+# Final-run play probability by ESPN game status (measured 2023-25, see availability.py). Only
+# used on the last scheduled run before a player's game; earlier runs defer (gametime.py).
+STATUS_DISCOUNT = {"QUESTIONABLE": 0.67, "DOUBTFUL": 0.02}
 HEALTHY_STATUSES = {"ACTIVE", "NORMAL", "", "NONE"}
 IR_ELIGIBLE_STATUSES = {"INJURY_RESERVE"}   # ESPN default IR rule; OUT-to-IR is a league option we don't assume

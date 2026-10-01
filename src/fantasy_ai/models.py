@@ -47,6 +47,8 @@ class Player:
     buzz: float = 0.0                        # 0..1 trending/news volume
     news_out: bool = False                   # confident fresh news says he will not play
     news_status: str | None = None           # status from news; if set, proj_week already includes it
+    news_status_factor: float = 1.0          # the status part of the news multiplier (gametime.py)
+    deferred_until: object | None = None     # datetime of the run that will decide a questionable start
     score_multiplier: float = 1.0            # product of bounded factors (factors/score.py)
     factors: list = field(default_factory=list)   # factors.score.Factor rows with reasons
     reasons: list[str] = field(default_factory=list)   # cited reasons for any adjustment
