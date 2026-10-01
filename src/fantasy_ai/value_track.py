@@ -28,9 +28,10 @@ from .usage_data import norm_name
 
 POSITIONS = ("QB", "RB", "WR", "TE")
 TOPK = {"QB": (12,), "TE": (12,), "RB": (24, 36), "WR": (24, 36)}
-PREDICTORS = ("ours", "ours_nohype", "espn_pg", "fc")
-LABELS = {"ours": "ours", "ours_nohype": "ours, hype off", "espn_pg": "ESPN per game", "fc": "FantasyCalc"}
-PAIRS = (("ours", "fc"), ("ours_nohype", "fc"), ("espn_pg", "fc"), ("ours", "ours_nohype"))
+PREDICTORS = ("ours", "ours_nohype", "espn_pg", "fc", "ecr")
+LABELS = {"ours": "ours", "ours_nohype": "ours, hype off", "espn_pg": "ESPN per game", "fc": "FantasyCalc",
+          "ecr": "FantasyPros ECR"}
+PAIRS = (("ours", "fc"), ("ours_nohype", "fc"), ("espn_pg", "fc"), ("ours", "ours_nohype"), ("ours", "ecr"))
 
 
 def history_dir(directory: Path | None = None) -> Path:
@@ -58,6 +59,8 @@ def snapshot(state, league: str, now: dt.datetime | None = None) -> dict:
             "espn_pg": round(p.per_game(), 2),
             "fc": getattr(p, "market_value", None), "fc_rank": getattr(p, "market_rank", None),
             "hype": h.label if h is not None else None, "hype_mult": mult,
+            # expert ROS rank as a score (higher = better) so score-values can grade ECR too
+            "ecr": -float(p.ecr["ros"]) if getattr(p, "ecr", None) and p.ecr.get("ros") else None,
         })
     return {"league": league, "season": state.year, "week": wk,
             "taken_at": (now or dt.datetime.now(dt.timezone.utc)).isoformat(timespec="seconds"),
