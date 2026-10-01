@@ -45,3 +45,19 @@ def test_long_texts_are_trimmed_but_keep_head_and_verdict():
         "\n".join(f"• {'y' * 200}" for _ in range(3)) + "\nVerdict: worth it"
     out = approval._fit(long)
     assert len(out) <= approval.MAX_CHARS and out.startswith("Add X") and out.endswith("Verdict: worth it")
+
+
+def test_expert_rank_line_goes_under_cons_when_experts_favor_the_drop():
+    s = two_te_league()
+    sg = waivers.evaluate_add(s, s.find_player("Woody Rb"), cfg={"min_gain_free_agent": 0})
+    sg.drop = s.find_player("Pitts Te")
+    s.find_player("Woody Rb").ecr = {"ros": 45, "ros_text": "RB45"}
+    s.find_player("Pitts Te").ecr = {"ros": 3, "ros_text": "TE3"}
+    text = approval.waiver_text(s, sg)
+    pros, cons = text.split("Cons:")
+    assert "TE3" not in pros and "dropping a TE the experts rank TE3 ROS (Woody Rb is RB45)" in cons
+    s.find_player("Woody Rb").ecr = {"ros": 2, "ros_text": "RB2"}
+    s.find_player("Pitts Te").ecr = {"ros": 30, "ros_text": "TE30"}
+    text = approval.waiver_text(s, sg)
+    pros, cons = text.split("Cons:")
+    assert "experts favor what we get: Woody Rb RB2" in pros and "experts" not in cons

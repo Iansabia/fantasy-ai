@@ -80,3 +80,28 @@ def test_empty_slot_left_empty_rather_than_starting_bye():
     e = [b.entry(b.player(1, "Q", "QB", 20, pro=2), 0)]   # pro team 2 on bye week 4
     res = optimize(make_state(e))
     assert res.target[1] == BENCH and res.after_points == 0
+
+
+def test_swap_margin_needs_one_point_and_five_percent():
+    from conftest import make_state
+    from fantasy_ai.lineup import optimize
+    # Dak 19.0 starting vs Goff 19.3 on the bench: +0.3 is noise, no swap
+    e = [b.entry(b.player(1, "Dak", "QB", 19.0), 0), b.entry(b.player(2, "Goff", "QB", 19.3), 20)]
+    assert optimize(make_state(e)).moves == []
+    # +1.2 clears 1.0 but not 5% of 30 (1.5): still no swap
+    e = [b.entry(b.player(1, "Star", "QB", 30.0), 0), b.entry(b.player(2, "Other", "QB", 31.2), 20)]
+    assert optimize(make_state(e)).moves == []
+    # +1.6 clears both: swap
+    e = [b.entry(b.player(1, "Star", "QB", 30.0), 0), b.entry(b.player(2, "Other", "QB", 31.6), 20)]
+    assert {m.name for m in optimize(make_state(e)).moves} == {"Star", "Other"}
+
+
+def test_swap_margin_does_not_protect_injured_or_out_starters():
+    from conftest import make_state
+    from fantasy_ai.lineup import optimize
+    # questionable starter (final-run discount 0.67): 15 -> 10.05 vs healthy 10.5 -> swap
+    one_wr = {"4": 1, "20": 5, "21": 1}
+    e = [b.entry(b.player(1, "Hurt", "WR", 15.0, injury="QUESTIONABLE"), 4), b.entry(b.player(2, "Fine", "WR", 10.5), 20)]
+    assert {m.name for m in optimize(make_state(e, slots=one_wr)).moves} == {"Hurt", "Fine"}
+    e = [b.entry(b.player(1, "Gone", "WR", 15.0, injury="OUT"), 4), b.entry(b.player(2, "Fine", "WR", 2.0), 20)]
+    assert {m.name for m in optimize(make_state(e, slots=one_wr)).moves} == {"Gone", "Fine"}

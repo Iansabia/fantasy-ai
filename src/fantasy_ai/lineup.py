@@ -93,6 +93,14 @@ def best_assignment(candidates: list[Player], open_slots: dict[int, int],
     return total, dict(assign)
 
 
+SWAP_MIN_POINTS = 1.0     # bench a healthy starter only for a replacement at least 1.0 point
+SWAP_MIN_SHARE = 0.05     # AND 5% better; injured / OUT / bye / IR swaps are exempt (no margin)
+
+
+def swap_margin(ev: float) -> float:
+    return max(SWAP_MIN_POINTS, SWAP_MIN_SHARE * ev)
+
+
 def optimize(state: LeagueState, roster: list[Player] | None = None, prefs=None) -> LineupResult:
     """prefs: fantasy_ai.prefs.Prefs (owner's start/bench/never rules) or None."""
     roster = roster if roster is not None else state.roster
@@ -133,6 +141,8 @@ def optimize(state: LeagueState, roster: list[Player] | None = None, prefs=None)
             v += FORCE_BONUS
         if p.lineup_slot == slot:
             v += KEEP_BONUS
+            if slot not in NON_STARTING and p.is_healthy() and p.news_status is None:
+                v += swap_margin(ev)         # a healthy starter is only replaced by a clear upgrade
         if slot not in FLEX_SLOTS:
             v += 1e-5 * ev                   # on ties, put the better player in the dedicated slot
         return v

@@ -63,6 +63,37 @@ def _ecr_text(p) -> str | None:
     return rec.get("ros_text") if rec and rec.get("ros") else None
 
 
+def _norm_rank(p, state) -> float | None:
+    """Expert ROS rank scaled by how many players start at his position in this league
+    (1.0 = the last starter), so ranks compare across positions (RB45 vs TE13)."""
+    from .vorp import starters_per_position
+    rec = getattr(p, "ecr", None)
+    if not rec or not rec.get("ros") or p.position not in SLOT:
+        return None
+    n = starters_per_position(state).get(p.position) or 1
+    return rec["ros"] / n
+
+
+def _expert_side(state, incoming, outgoing) -> tuple[str | None, str | None]:
+    """(pro, con): an expert-rank line goes under Pros only when experts favor what we get,
+    under Cons when they favor what we give up."""
+    def best(ps):
+        vals = [(r, p) for p in ps if (r := _norm_rank(p, state)) is not None]
+        return min(vals, key=lambda x: x[0]) if vals else None
+    bi, bo = best(incoming), best(outgoing)
+    names = lambda ps: ", ".join(f"{p.name} {_ecr_text(p)}" for p in ps if _ecr_text(p))
+    if bi and (not bo or bi[0] < bo[0]):
+        if bo or bi[0] <= 1.0:
+            return f"experts favor what we get: {names(incoming)} ROS" + (f" vs {names(outgoing)}" if bo else ""), None
+        return None, None
+    if bo and (not bi or bo[0] <= bi[0]):
+        if bi or bo[0] <= 1.0:
+            gone = bo[1]
+            return None, (f"experts favor what we give up: {gone.name} is {_ecr_text(gone)} ROS"
+                          + (f" vs {names(incoming)}" if bi else ""))
+    return None, None
+
+
 def _status_cons(players, state) -> list[str]:
     out = []
     wk = state.scoring_period
@@ -93,13 +124,16 @@ def waiver_text(state, s) -> str:
         pros += _fixes(state, [add])
     if _trend(add) == "uptrend":
         pros.append(f"{add.name} on an uptrend ({add.trend.next3 - 1:+.0%} next 3 wks)")
-    if _ecr_text(add) and not overrated(add, state):
-        pros.append(f"experts rank {add.name} {_ecr_text(add)} ROS" + (f", {d.name} {_ecr_text(d)}" if d and _ecr_text(d) else ""))
+    ex_pro, ex_con = _expert_side(state, [add], [d] if d is not None else [])
+    if ex_pro and not overrated(add, state):
+        pros.append(ex_pro)
     if d is not None and s.add_value > s.drop_value:
         pros.append(f"rest of season {s.add_value:.0f} vs {s.drop_value:.0f}")
     cons = []
     if d is not None:
         cons += _thin(state, {d.player_id}, [add], [d.position])
+        if ex_con:
+            cons.append(f"dropping a {d.position} the experts rank {_ecr_text(d)} ROS ({add.name} is {_ecr_text(add) or 'unranked'})")
         if _trend(d) == "uptrend":
             cons.append(f"{d.name} is on an uptrend ({d.trend.next3 - 1:+.0%})")
     cons += _status_cons([add], state)
@@ -127,9 +161,10 @@ def trade_text(state, idea) -> str:
         pros.append("buys " + ", ".join(f"{p.name} on an uptrend ({next3(p) - 1:+.0%})" for p in up))
     if idea.overpay is not None and idea.overpay <= 0:
         pros.append(f"FantasyCalc: we pay {idea.fc_give:.0f} for {idea.fc_get:.0f} ({idea.overpay_pct:+.1%})")
-    if all(_ecr_text(p) for p in get):
-        pros.append("experts: " + ", ".join(f"{p.name} {_ecr_text(p)}" for p in get) + " ROS")
-    cons = []
+    ex_pro, ex_con = _expert_side(state, get, give)
+    if ex_pro:
+        pros.append(ex_pro)
+    cons = [ex_con] if ex_con else []
     sold_up = [p for p in give if _trend(p) == "uptrend"]
     if sold_up:
         cons.append("sells " + ", ".join(f"{p.name} on an uptrend ({next3(p) - 1:+.0%})" for p in sold_up))
