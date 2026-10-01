@@ -17,8 +17,8 @@
 Common flags: --no-news (skip the news layer), --no-factors (skip matchup/Vegas/weather/usage).
 Nothing is ever texted unless --notify is given; FAI_NOTIFY_BACKEND=console forces console.
 
---quiet (or FAI_QUIET=1): stdout shows only counts like "league 1: 2 moves, sent".
-No names, players, payloads, ids or phone numbers. Use it in public CI logs.
+--quiet (or FAI_QUIET=1): stdout shows only counts per league, by its short config name
+("jville: full: 2 moves, sent"). No players, payloads, ids or phone numbers.
 
 Lineups: dry-run unless --send (own team only). IR moves go in a separate request after the
 lineup request. Waivers, add/drops and trades: never sent directly. They go to the approval
@@ -756,7 +756,8 @@ def cmd_autopilot(cfg: AppConfig, args) -> int:
     if base_mode == "inactives" and not cfg.schedule.get("sunday_inactive_check", False):
         summary("inactive check is disabled (schedule.sunday_inactive_check: false)")
         return 0
-    now = _dt.datetime.now(_dt.timezone.utc)
+    from .gametime import now as _now
+    now = _now()                               # FAI_NOW-aware, so dry runs and tests see the same clock
     leagues = [l for l in cfg.leagues if (l.fixture_dir is not None) == bool(args.demo)]
     if base_mode == "catchup" and not any(schedule.missed_full(l.label, now) for l in leagues):
         summary("catchup: nothing missed")
@@ -766,19 +767,19 @@ def cmd_autopilot(cfg: AppConfig, args) -> int:
     rc_all = 0
     for i, lg in enumerate(leagues, 1):
         if not lg.fixture_dir and (not lg.league_id or not lg.team_id or not load_credentials(lg.auth_profile)):
-            summary(f"league {i}: skipped (not configured or no cookies)")
+            summary(f"{lg.name}: skipped (not configured or no cookies)")
             continue
         mode = base_mode
         if mode != "full" and schedule.missed_full(lg.label, now):
             mode = "full"                       # Thursday run was missed: catch up before kickoff
-            summary(f"league {i}: missed Thursday run, running full catch-up")
+            summary(f"{lg.name}: missed Thursday run, running full catch-up")
         elif mode == "catchup":
             continue
         full = mode == "full"
         n = notify.make_notifier(cfg.notify, lg.owner) if args.notify else None
         if not lg.fixture_dir:
             if pacer.in_cooldown(lg.name):
-                summary(f"league {i}: paused (cooldown)")
+                summary(f"{lg.name}: paused (cooldown)")
                 continue
             pacer.between_leagues()
         try:
@@ -814,7 +815,7 @@ def cmd_autopilot(cfg: AppConfig, args) -> int:
                 for f in failures:
                     print(f"{lg.label}: {f}")
                 if failures:
-                    summary(f"league {i}: waiver check failed ({len(failures)})")
+                    summary(f"{lg.name}: waiver check failed ({len(failures)})")
                     if n:
                         n.send(f"⚠️ {lg.label} | Waiver check failed\n\n" + "\n".join(f"• {f}" for f in failures[:5]))
                 for s in ideas:
@@ -833,7 +834,7 @@ def cmd_autopilot(cfg: AppConfig, args) -> int:
                     if n:
                         n.send(notify.msg_pending(a))
             moves = len(res.moves) + len(res.ir_moves)
-            summary(f"league {i}: {mode}: {moves} moves, {status}; {queued} queued for approval")
+            summary(f"{lg.name}: {mode}: {moves} moves, {status}; {queued} queued for approval")
             if rc == 0:
                 schedule.record(lg.label, mode, {"moves": moves, "queued": queued, "sent": send})
             if n:
@@ -842,13 +843,13 @@ def cmd_autopilot(cfg: AppConfig, args) -> int:
                                           None if rc in (0,) else f"exit code {rc}"))
         except PacingStop as e:
             rc_all = rc_all or 4
-            summary(f"league {i}: paused (ESPN pushed back)")
+            summary(f"{lg.name}: paused (ESPN pushed back)")
             print(f"{lg.label}: {e}")
             if n:
                 n.send(notify.msg_paused(lg.label, str(e)))
         except Exception as e:   # one league failing never stops the others
             rc_all = rc_all or 1
-            summary(f"league {i}: error ({type(e).__name__})")
+            summary(f"{lg.name}: error ({type(e).__name__})")
             print(f"{lg.label}: error: {e}")
             if n:
                 n.send(schedule.heartbeat(lg.label, mode, 0, 0, False, type(e).__name__))
@@ -879,8 +880,29 @@ def cmd_poll_telegram(cfg: AppConfig, args) -> int:
 
 
 def cmd_poll_imessage(cfg: AppConfig, args) -> int:
-    from .imessage_poll import poll
-    for line in poll(cfg, _store(args)):
+    """Runs every 2 minutes from launchd. Without Full Disk Access it logs ONE clear line per day
+    and exits 0 (no failure status, no repeated noise) until Ian grants access."""
+    import datetime as _dt
+    import sys as _sys
+    from .imessage_poll import ChatDbUnavailable, poll
+    from .prefs import data_dir
+    marker = data_dir() / "imessage_fda_warned"
+    try:
+        lines = poll(cfg, _store(args))
+    except ChatDbUnavailable:
+        today = _dt.date.today().isoformat()
+        warned = marker.read_text().strip() if marker.exists() else ""
+        if warned != today:
+            marker.parent.mkdir(parents=True, exist_ok=True)
+            marker.write_text(today)
+            import os as _os
+            summary(f"poll-imessage: waiting for Full Disk Access for {_os.path.realpath(_sys.executable)} "
+                    "(System Settings > Privacy & Security > Full Disk Access); retrying quietly every 2 min")
+        return 0
+    if marker.exists():
+        marker.unlink()
+        summary("poll-imessage: Full Disk Access works now; reading replies")
+    for line in lines:
         summary(line)
     return 0
 
@@ -1023,6 +1045,8 @@ def main(argv: list[str] | None = None) -> int:
     except Exception as e:
         rc = 1
         SUMMARY.append(f"{args.cmd}: error ({type(e).__name__})")
+    if args.cmd == "poll-imessage" and rc == 0 and not SUMMARY:
+        return rc                     # every 2 minutes: stay silent when there is nothing to say
     for line in SUMMARY or [f"{args.cmd}: done"]:
         print(line)
     print(f"{args.cmd}: exit {rc}")

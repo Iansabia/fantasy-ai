@@ -19,7 +19,7 @@ def test_quiet_autopilot_prints_counts_only(tmp_path, capsys):
     out = capsys.readouterr()
     text = out.out + out.err
     import re
-    assert rc == 0 and re.search(r"league 1: full: 6 moves, dry-run; [12] queued for approval", text), text
+    assert rc == 0 and re.search(r"demo: full: 6 moves, dry-run; [12] queued for approval", text), text
     for secret in DEMO_NAMES + ["DRY RUN", "{"]:
         assert secret not in text
 

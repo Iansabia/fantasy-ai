@@ -119,7 +119,10 @@ def _fit(text: str) -> str:
 def waiver_text(state, s) -> str:
     from .experts import caution, overrated
     add, d = s.add, s.drop
-    pros = [f"lineup +{s.lineup_gain:.1f} pts over the next 3 wks (starts {s.starts_add} of 3)" if s.lineup_gain > 0 else None]
+    parts = f"lineup {s.lineup_gain:+.1f} (starts {s.starts_add} of 3)" + (
+        f", rest-of-season value {s.ros_term:+.1f}" if s.ros_term else "")
+    gain_line = f"gain {s.gain:+.1f} pts over 3 wks: {parts}"     # the SAME number as the verdict
+    pros = [gain_line if s.gain > 0 else None]
     if s.starts_add:
         pros += _fixes(state, [add])
     if _trend(add) == "uptrend":
@@ -136,6 +139,8 @@ def waiver_text(state, s) -> str:
             cons.append(f"dropping a {d.position} the experts rank {_ecr_text(d)} ROS ({add.name} is {_ecr_text(add) or 'unranked'})")
         if _trend(d) == "uptrend":
             cons.append(f"{d.name} is on an uptrend ({d.trend.next3 - 1:+.0%})")
+    if s.gain <= 0:
+        cons.insert(0, gain_line)
     cons += _status_cons([add], state)
     w = caution(add, state)
     if w and w.startswith("CAUTION"):

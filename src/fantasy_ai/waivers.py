@@ -72,6 +72,7 @@ class WaiverSuggestion:
     next3_drop: float = 0.0
     starts_add: int = 0                  # weeks in the horizon the add would start
     starts_drop: int = 0                 # weeks the drop would have started
+    ros_term: float = 0.0                # rest-of-season part of gain (gain = lineup_gain + ros_term)
     add_vorp: float | None = None        # rest-of-season value above replacement (cross-position)
     drop_vorp: float | None = None
 
@@ -236,6 +237,9 @@ def _useful_depth(p: Player, roster: list[Player], state: LeagueState, cfg: dict
 
 # ---------------------------------------------------------------- evaluate one add
 
+from .experts import favors  # noqa: E402
+
+
 def evaluate_add(state: LeagueState, add: Player, prefs=None, cfg: dict | None = None,
                  cache: dict | None = None, only_drop: Player | None = None) -> WaiverSuggestion | None:
     """Best drop for this add (or no drop if there is an open roster spot). Returns the best
@@ -283,6 +287,8 @@ def evaluate_add(state: LeagueState, add: Player, prefs=None, cfg: dict | None =
         share_add = max(floor_add, starts / H)
         share_drop = max(floor_drop, sum(1 for b in base if d is not None and d.player_id in b[2]) / H)
         ros_term = 0.0 if d is None else (v_add * share_add - v_drop * share_drop) * H / weeks_left
+        if d is not None and ros_term > 0 and favors(d, add, state):
+            ros_term = 0.0          # experts rank the drop ahead for ROS: our ROS edge can't carry the move
         gain = round(cfg["next3_weight"] * lineup + cfg["ros_weight"] * ros_term, 1)
         # ties go to dropping the lower rest-of-season player
         if best is None or gain > best[0] or (gain == best[0] and r_drop < best[4]):
@@ -353,7 +359,7 @@ def evaluate_add(state: LeagueState, add: Player, prefs=None, cfg: dict | None =
     return WaiverSuggestion(add, d, r_add, r_drop, gain, "WAIVER" if claim else "FREEAGENT", reason,
                             lines, lineup, threshold, considered=considered, rejected=rejected,
                             next3_add=next3_add, next3_drop=next3_drop, starts_add=starts, starts_drop=d_starts,
-                            add_vorp=v_add, drop_vorp=v_drop if d else None)
+                            add_vorp=v_add, drop_vorp=v_drop if d else None, ros_term=round(ros_term, 1))
 
 
 # ---------------------------------------------------------------- ranking

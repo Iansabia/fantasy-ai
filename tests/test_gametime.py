@@ -128,6 +128,7 @@ def test_sunday_inactives_autopilot_end_to_end(tmp_path, monkeypatch, capsys):
                    f"auth_profile: ian, fixture: {fx}}}\nsettings: {{auto_lineup: false}}\n"
                    f"notify: {{backend: console}}\nschedule: {{sunday_inactive_check: true}}\n")
     monkeypatch.setenv("FAI_NOW", "2026-10-04T11:50:00-04:00")
+    schedule.record("sun", "full", {}, now=et(2026, 10, 1, 14, 5))      # this week's Thursday run happened
     lg = LeagueConfig(name="sun", owner="ian", league_id=99, team_id=1, year=2026, auth_profile="ian", fixture=str(fx))
     reader = EspnReader(lg)
     state = reader.load()

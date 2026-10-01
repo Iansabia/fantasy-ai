@@ -23,6 +23,10 @@ def _default_llm():
     return LLM(max_calls=10)
 
 CHAT_DB = Path.home() / "Library" / "Messages" / "chat.db"
+
+
+class ChatDbUnavailable(RuntimeError):
+    """chat.db can't be read (no Full Disk Access yet)."""
 STATE_FILE = ROOT / "data" / "imessage_last.json"
 
 
@@ -100,7 +104,7 @@ def poll(cfg: AppConfig, store: PendingStore, backend=None, approve_fn=None,
         last = json.loads(state_file.read_text())["rowid"]
         rows = read_new(db, last)
     except sqlite3.OperationalError as e:
-        raise RuntimeError("Can't read Messages (chat.db). Give Full Disk Access to the app "
+        raise ChatDbUnavailable("Can't read Messages (chat.db). Give Full Disk Access to the app "
                            "running this: System Settings > Privacy & Security > Full Disk Access.") from e
     allowed = allowed_senders(cfg)
     llm = llm or _default_llm()

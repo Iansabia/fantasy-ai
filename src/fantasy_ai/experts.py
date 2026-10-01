@@ -138,3 +138,19 @@ def note(p, state, ranks: dict[int, int] | None = None) -> str | None:
         if rec and rec.get("ros") and abs(rec["ros"] - ours) > DISAGREE:
             txt += f" (BIG DISAGREEMENT: {'we are higher' if ours < rec['ros'] else 'experts are higher'})"
     return txt
+
+
+def norm_rank(p, state) -> float | None:
+    """Expert ROS rank scaled by how many players start at his position in this league
+    (1.0 = the last starter), so ranks compare across positions."""
+    from .vorp import starters_per_position
+    rec = getattr(p, "ecr", None)
+    if not rec or not rec.get("ros") or p.position not in ("QB", "RB", "WR", "TE"):
+        return None
+    return rec["ros"] / (starters_per_position(state).get(p.position) or 1)
+
+
+def favors(a, b, state) -> bool:
+    """Do the experts rank a ahead of b for the rest of the season (cross-position safe)?"""
+    ra, rb = norm_rank(a, state), norm_rank(b, state)
+    return ra is not None and rb is not None and ra < rb

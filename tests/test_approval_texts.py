@@ -61,3 +61,31 @@ def test_expert_rank_line_goes_under_cons_when_experts_favor_the_drop():
     text = approval.waiver_text(s, sg)
     pros, cons = text.split("Cons:")
     assert "experts favor what we get: Woody Rb RB2" in pros and "experts" not in cons
+
+
+def _numbers(text):
+    import re
+    gain = re.search(r"gain ([+-]\d+\.\d) pts over 3 wks", text)
+    verdict = re.search(r"Verdict: .*?([+-]\d+\.\d) pts over 3 wks|Verdict: below the bar, ([+-]\d+\.\d)", text)
+    return gain and gain.group(1), verdict and (verdict.group(1) or verdict.group(2))
+
+
+def test_verdict_number_always_equals_the_gain_shown_in_pros():
+    s = two_te_league()
+    for drop in ("Pitts Te", "Bench Wr0", "Bench Wr5"):
+        sg = waivers.evaluate_add(s, s.find_player("Woody Rb"), cfg={"min_gain_free_agent": 0})
+        g, v = _numbers(approval.waiver_text(s, sg))
+        assert g is not None and g == v
+        assert abs(sg.gain - round(sg.lineup_gain + sg.ros_term, 1)) <= 0.11
+
+
+def test_experts_ranking_the_drop_higher_cancels_our_ros_edge():
+    s = two_te_league()
+    add, drop = s.find_player("Woody Rb"), s.find_player("Pitts Te")
+    add.proj_season, drop.proj_season = 300, 60          # our ROS strongly favors the add
+    base = waivers.evaluate_add(s, add, cfg={"min_gain_free_agent": 0})
+    add.ecr, drop.ecr = {"ros": 45, "ros_text": "RB45"}, {"ros": 3, "ros_text": "TE3"}
+    vetoed = waivers.evaluate_add(s, add, cfg={"min_gain_free_agent": 0})
+    if base.drop is not None and base.drop.player_id == drop.player_id and base.ros_term > 0:
+        assert vetoed.drop is None or vetoed.drop.player_id != drop.player_id or vetoed.ros_term == 0
+    assert waivers.favors(drop, add, s) and not waivers.favors(add, drop, s)

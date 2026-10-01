@@ -75,3 +75,23 @@ def test_reject_and_attributed_body(tmp_path, monkeypatch, store):
     be = FakeBackend()
     imessage_poll.poll(Cfg(), store, be, lambda *a: (0, "x"), db, st, llm=lambda p: None)
     assert store.get(a.id).status == "rejected" and "rejected" in be.sent[0][1]
+
+
+def test_poll_without_full_disk_access_logs_once_and_exits_zero(monkeypatch, capsys):
+    from fantasy_ai import cli, imessage_poll
+
+    def no_access(*a, **k):
+        raise imessage_poll.ChatDbUnavailable("Can't read Messages (chat.db)")
+    monkeypatch.setattr(imessage_poll, "poll", no_access)
+    assert cli.main(["--quiet", "--config", "config/leagues.example.yaml", "poll-imessage"]) == 0
+    first = capsys.readouterr().out
+    assert "waiting for Full Disk Access" in first and "exit 0" in first
+    assert cli.main(["--quiet", "--config", "config/leagues.example.yaml", "poll-imessage"]) == 0
+    assert capsys.readouterr().out == ""                       # no repeated noise the same day
+
+
+def test_quiet_poll_with_nothing_new_prints_nothing(monkeypatch, capsys):
+    from fantasy_ai import cli, imessage_poll
+    monkeypatch.setattr(imessage_poll, "poll", lambda *a, **k: [])
+    assert cli.main(["--quiet", "--config", "config/leagues.example.yaml", "poll-imessage"]) == 0
+    assert capsys.readouterr().out == ""

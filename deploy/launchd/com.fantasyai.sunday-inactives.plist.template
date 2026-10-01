@@ -20,6 +20,7 @@
   <key>EnvironmentVariables</key>
   <dict>
     <key>FAI_NOTIFY_BACKEND</key><string>imessage</string>
+    <key>PYTHONUNBUFFERED</key><string>1</string>
     <key>PATH</key><string>/usr/bin:/bin:/usr/sbin:/sbin:/opt/homebrew/bin</string>
   </dict>
   <key>WorkingDirectory</key><string>__REPO__</string>
